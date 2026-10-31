@@ -396,7 +396,10 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
     @app.patch("/api/products/<int:product_id>")
     def product_edit(product_id):
         b = body()
-        if any(k.endswith("_days") for k in b):
+        c0 = con()
+        cur = inventory.get_product(c0, product_id)
+        # Your own shelf-life numbers or storage place: the AI won't override them later.
+        if any(k.endswith("_days") for k in b) or (cur and b.get("default_location") not in (None, cur["default_location"])):
             b.setdefault("shelf_source", "manual")
         c = con()
         with c:

@@ -170,6 +170,17 @@ class InventoryTests(Base):
         self.assertEqual(it["expires_on"], (date.today() + timedelta(days=7)).isoformat())
         self.assertEqual(it["opened_on"], date.today().isoformat())
 
+    def test_plant_milk_defaults_to_fridge_and_manual_location_sticks(self):
+        r = self.add("Almond Milk Unsweetened")
+        self.assertEqual(r["item"]["location"], "fridge")
+        self.c.patch(f"/api/products/{r['product_id']}", json={"default_location": "pantry"}, headers=H)
+        p = self.c.get(f"/api/products/{r['product_id']}").json["product"]
+        self.assertEqual((p["default_location"], p["shelf_source"]), ("pantry", "manual"))
+        # Saving other fields with the same storage place doesn't count as overriding it
+        r2 = self.add("Rice cakes")
+        self.c.patch(f"/api/products/{r2['product_id']}", json={"name": "Rice cakes", "default_location": "pantry"}, headers=H)
+        self.assertEqual(self.c.get(f"/api/products/{r2['product_id']}").json["product"]["shelf_source"], "category")
+
     def test_product_shelf_override_recalculates(self):
         r = self.add("Sourdough")
         self.c.patch(f"/api/products/{r['product_id']}", json={"shelf_pantry_days": 3}, headers=H)

@@ -17,7 +17,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 # key: (label, pantry, fridge, freezer, opened, default location)
 CATEGORIES: Dict[str, Tuple[str, Optional[int], Optional[int], Optional[int], Optional[int], str]] = {
     "milk":           ("Milk & cream",          None, 7,    90,   5,    "fridge"),
-    "plant_milk":     ("Plant milk (shelf)",    270,  10,   None, 7,    "pantry"),
+    "plant_milk":     ("Plant milk",            270,  10,   None, 7,    "fridge"),   # pantry days = shelf-stable cartons
     "cheese_hard":    ("Hard cheese",           None, 120,  180,  30,   "fridge"),
     "cheese_soft":    ("Soft cheese",           None, 14,   90,   7,    "fridge"),
     "yogurt":         ("Yogurt & sour cream",   None, 14,   60,   7,    "fridge"),

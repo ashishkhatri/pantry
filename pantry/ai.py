@@ -401,7 +401,9 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
         "\"fridge_days\": integer or null if not suitable, \"freezer_days\": integer or null if it shouldn't be frozen, "
         "\"opened_days\": days it keeps once opened (in its usual place) or null if not applicable, "
         "\"best_location\": where a household should normally keep it unopened, \"pantry\" (room temperature, "
-        "including produce like potatoes, onions, bananas and bread) | \"fridge\" | \"freezer\" (only for frozen foods), "
+        "including produce like potatoes, onions, bananas and bread) | \"fridge\" | \"freezer\" (only for frozen foods). "
+        "If the product is sold both refrigerated and shelf-stable (plant milks, juice, tofu, some sauces) and the name "
+        "doesn't say shelf-stable, assume the refrigerated version, the safer choice, "
         "\"note\": one short storage tip}")
     d = ask_json(p, "shelf", SYSTEM, prompt, None, 600)
     if not isinstance(d, dict):
