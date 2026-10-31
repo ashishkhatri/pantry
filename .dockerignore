@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+data
+tests
+__pycache__
+*.pyc
+start.bat
+install/*.sh
+!install/docker-entrypoint.sh
+install/*.ps1
+install/*.service

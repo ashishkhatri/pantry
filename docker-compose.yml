@@ -1,0 +1,19 @@
+# docker compose up -d   → http://<this-machine>:8790
+services:
+  pantry:
+    image: ghcr.io/ashishkhatri/pantry:latest
+    container_name: pantry
+    restart: unless-stopped
+    ports:
+      - "8790:8790"
+    volumes:
+      - ./data:/data          # database, backups, receipt photos, keys
+    environment:
+      - TZ=America/New_York   # daily reminders go out in this time zone
+      - PUID=1000             # files in ./data are owned by this user/group
+      - PGID=1000
+      # - PANTRY_VAPID_SUBJECT=mailto:you@example.com
+    # If your AI server runs on this same machine (Ollama/LM Studio), use
+    # http://host.docker.internal:11434 as its address in Settings → AI:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

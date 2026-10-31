@@ -1,0 +1,25 @@
+[Unit]
+Description=Pantry household pantry tracker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=pantry
+Group=pantry
+WorkingDirectory=/opt/pantry
+Environment=PANTRY_DATA_DIR=/var/lib/pantry
+Environment=PANTRY_HOST=0.0.0.0
+Environment=PANTRY_PORT=@PORT@
+# Optional: a contact address sent to push services with each notification.
+# Environment=PANTRY_VAPID_SUBJECT=mailto:you@example.com
+ExecStart=/opt/pantry/.venv/bin/python -m pantry
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pantry
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
