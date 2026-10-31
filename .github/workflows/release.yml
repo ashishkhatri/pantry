@@ -1,5 +1,5 @@
 name: release
-# Push a tag like v0.2.0 to publish ghcr.io/<owner>/pantry:0.2.0 (and :latest) and a GitHub release.
+# Push a tag like v0.2.0 (or create a release with a new v0.2.0 tag on GitHub) to publish ghcr.io/<owner>/pantry:0.2.0 (and :latest) and a GitHub release.
 on:
   push:
     tags: ["v*"]
@@ -54,4 +54,7 @@ jobs:
       - uses: actions/checkout@v4
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "Pantry $GITHUB_REF_NAME" --generate-notes
+        # The release may already exist if it was created on GitHub's website (which also makes the tag).
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" --title "Pantry $GITHUB_REF_NAME" --generate-notes
