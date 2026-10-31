@@ -109,6 +109,36 @@ select{appearance:none;-webkit-appearance:none;background-image:var(--chev);back
 .stepper button:hover{color:var(--ink);background:var(--bg)}
 .stepper span{min-width:26px;text-align:center;font-weight:650;font-variant-numeric:tabular-nums}
 
+/* pantry table */
+.ptable .ph,.ptable .pr{display:grid;grid-template-columns:minmax(0,1fr) 64px 118px 150px 116px;gap:12px;align-items:center;padding:9px 14px}
+.ptable .ph{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--line);padding-top:10px;padding-bottom:10px}
+.ptable .pr{border-bottom:1px solid var(--line);cursor:pointer}
+.ptable .pr:last-child{border-bottom:0}
+.ptable .pr:hover{background:color-mix(in srgb,var(--bg) 60%,transparent)}
+.ptable .pname{display:flex;align-items:center;gap:12px;min-width:0}
+.ptable .pname .main{min-width:0}
+.ptable .pname .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ptable .pname .meta{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ptable .c-open{text-align:center}
+.ptable .c-open input{width:20px;height:20px;accent-color:var(--accent);cursor:pointer}
+.ptable .c-open .lbl{display:none}
+.ptable .c-loc select{padding:5px 26px 5px 8px;font-size:13px;background-position:right 8px center}
+.ptable .c-exp{font-size:13px;line-height:1.3}
+.ptable .c-exp .d{font-variant-numeric:tabular-nums}
+.ptable .c-qty{justify-self:end}
+.ptable .ph .c-qty{justify-self:end}
+@media (max-width:760px){
+  .ptable .ph{display:none}
+  .ptable .pr{grid-template-columns:auto 98px minmax(0,1fr);grid-template-areas:"name name exp" "open loc qty";row-gap:8px;column-gap:10px;padding:10px 12px}
+  .ptable .c-loc select{width:100%}
+  .ptable .c-exp .d{white-space:nowrap}
+  .ptable .c-qty .stepper button{width:30px}
+  .ptable .pname{grid-area:name}.ptable .c-open{grid-area:open}.ptable .c-loc{grid-area:loc}.ptable .c-exp{grid-area:exp}.ptable .c-qty{grid-area:qty}
+  .ptable .c-open{display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted)}
+  .ptable .c-open .lbl{display:inline}
+  .ptable .c-exp{display:flex;flex-direction:column;align-items:flex-end;justify-self:end;text-align:right;gap:2px}
+}
+
 /* quick actions */
 .actions{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
 .act{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 8px;border-radius:12px;border:1px solid var(--line);background:var(--panel);cursor:pointer;font-weight:600;font-size:13px;box-shadow:var(--shadow)}
@@ -586,6 +616,16 @@ $('#home-photo').onclick=()=>photoIdentify();
 
 /* ---------- pantry ---------- */
 let pantryLoc='';
+function pantryRow(it){
+  const meta=[it.brand,it.size_text].filter(Boolean).map(esc).join(' · ')||esc(it.category_label);
+  return `<div class="pr" data-item="${it.id}">
+    <div class="pname">${thumb(it)}<div class="main"><div class="name">${esc(it.name)}</div><div class="meta">${meta}</div></div></div>
+    <label class="c-open" title="${it.opened_on?'Opened '+esc(fmtDate(it.opened_on)):'Mark as opened'}"><input type="checkbox" data-open="${it.id}" ${it.opened_on?'checked':''}><span class="lbl">Opened</span></label>
+    <div class="c-loc"><select data-loc="${it.id}" aria-label="Location">${locOptions(it.location)}</select></div>
+    <div class="c-exp">${it.expires_on?`<span class="d">${esc(fmtDate(it.expires_on))}</span>`:'<span class="muted">No date</span>'} ${it.expires_on?expPill(it):''}</div>
+    <div class="c-qty"><div class="stepper"><button data-minus="${it.id}" aria-label="Use one">−</button><span>${qtyFmt(it.quantity)}</span><button data-plus="${it.id}" aria-label="Add one">+</button></div></div>
+  </div>`;
+}
 async function renderPantry(){
   $$('#pantry-loc button').forEach(b=>b.classList.toggle('on',b.dataset.loc===pantryLoc));
   const q=$('#pantry-q').value.trim();
@@ -593,9 +633,25 @@ async function renderPantry(){
   const sort=$('#pantry-sort').value;
   if(sort==='name') items.sort((a,b)=>a.name.localeCompare(b.name));
   if(sort==='added') items.sort((a,b)=>b.added_on.localeCompare(a.added_on)||b.id-a.id);
-  $('#pantry-list').innerHTML=items.length?`<div class="list">${items.map(i=>itemRow(i)).join('')}</div>`:
+  const root=$('#pantry-list');
+  root.innerHTML=items.length?`<div class="list ptable"><div class="ph"><div>Item</div><div class="c-open">Opened</div><div>Location</div><div>Good until</div><div class="c-qty">Quantity</div></div>${items.map(pantryRow).join('')}</div>`:
     `<div class="card empty">${q?'Nothing matches.':'Nothing here yet.'}<div style="margin-top:12px"><button class="btn primary" onclick="go('scan')">Scan something</button></div></div>`;
-  bindItemRows($('#pantry-list'));
+  const byId=Object.fromEntries(items.map(i=>[i.id,i]));
+  // Tapping the row (not a control) opens the details.
+  root.querySelectorAll('.pr').forEach(el=>el.onclick=e=>{ if(e.target.closest('input,select,button,label')) return; itemModal(+el.dataset.item); });
+  root.querySelectorAll('[data-open]').forEach(cb=>cb.onchange=()=>safe(async()=>{
+    const it=byId[cb.dataset.open];
+    await api('/api/items/'+it.id,{method:'PATCH',json:{opened:cb.checked}});
+    if(cb.checked&&it.opened_location&&it.opened_location!==it.location) toast(`${it.name} opened: moved to the ${LOC_LABEL[it.opened_location].toLowerCase()}.`);
+    renderPantry();
+  }));
+  root.querySelectorAll('[data-loc]').forEach(sel=>sel.onchange=()=>safe(async()=>{
+    await api('/api/items/'+sel.dataset.loc,{method:'PATCH',json:{location:sel.value}}); renderPantry();
+  }));
+  root.querySelectorAll('[data-plus]').forEach(b=>b.onclick=()=>safe(async()=>{
+    const it=byId[b.dataset.plus]; await api('/api/items/'+it.id,{method:'PATCH',json:{quantity:it.quantity+1}}); renderPantry();
+  }));
+  root.querySelectorAll('[data-minus]').forEach(b=>b.onclick=()=>useItem(+b.dataset.minus,'used',1));
 }
 $$('#pantry-loc button').forEach(b=>b.onclick=()=>{ pantryLoc=b.dataset.loc; renderPantry(); });
 let pq; $('#pantry-q').oninput=()=>{ clearTimeout(pq); pq=setTimeout(()=>safe(renderPantry),200); };
