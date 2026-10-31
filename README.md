@@ -170,7 +170,18 @@ An item's estimated date works like this:
 - **Moved to or from the freezer:** the clock restarts from today, because the printed date no longer applies.
 - **Typed by you:** your date is kept as it is.
 
-With AI on, each **new** product is sent to the AI once for its own numbers (*"Ask the AI for shelf life when a new product is added"*). For example, gochujang gets a year in the pantry rather than the generic "condiments" default. These show as *AI estimate*. You can change any product's numbers yourself under **item → Product & shelf-life settings**; your numbers are never overwritten.
+With AI on, each **new** product is sent to the AI once.
+- **What it decides:** how long the product keeps in each place, and **where to store it** (pantry, fridge or freezer).
+- **Example:** gochujang gets a year in the pantry instead of the generic "condiments" default.
+- **In the app:** these show as *AI estimate*.
+
+**Products added before AI was set up:** use **Settings → AI → ✦ Estimate shelf life & storage for existing products**.
+- It works through every product still on category defaults, in the background, with progress in the top bar.
+- Tick *Also re-check…* to redo ones the AI already estimated.
+
+**Moving items:** when the AI picks a different storage place, items in stock move there only if they're still where Pantry guessed. Anything you put somewhere yourself, or moved, stays put. Moved items are re-dated for their new place, counted from when they were added.
+
+**Your own numbers win:** you can change any product's numbers under **item → Product & shelf-life settings**, and the AI never overwrites them.
 
 ## Recipes and matching
 

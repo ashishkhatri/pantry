@@ -448,6 +448,63 @@ class AITests(Base):
         it = self.c.get("/api/items").json["items"][0]
         self.assertEqual(it["expires_on"], (date.today() + timedelta(days=300)).isoformat())
 
+    def test_estimate_existing_products(self):
+        self.c.put("/api/settings", json={"ai": {"ai_auto_shelf": False}}, headers=H)
+        for n in ("Gochujang", "Fish sauce", "Mystery jar"):
+            self.post("/api/items", {"product": {"name": n}})
+        mine = self.post("/api/items", {"product": {"name": "Homemade jam"}})
+        self.c.patch(f"/api/products/{mine['product_id']}", json={"shelf_pantry_days": 20}, headers=H)
+        st = self.c.get("/api/ai/shelf-status").json
+        self.assertEqual((st["defaults"], st["ai"], st["manual"]), (3, 0, 1))
+        FakeOllama.answers = {"Estimate how long": json.dumps(
+            {"category": "condiments", "pantry_days": 400, "fridge_days": None, "freezer_days": None,
+             "opened_days": 60, "best_location": "pantry"})}
+        job = self.post("/api/ai/shelf-all")["job"]
+        self.assertEqual(self.post("/api/ai/shelf-all")["job"], job)      # no duplicate runs
+        self.run_jobs()
+        r = self.c.get(f"/api/jobs/{job}").json["job"]
+        self.assertEqual(r["status"], "done", r)
+        self.assertEqual((r["result"]["updated"], r["result"]["total"]), (3, 3))
+        st = self.c.get("/api/ai/shelf-status").json
+        self.assertEqual((st["defaults"], st["ai"], st["manual"], st["job"]), (0, 3, 1, None))
+        items = {i["name"]: i for i in self.c.get("/api/items").json["items"]}
+        self.assertEqual(items["Gochujang"]["expires_on"], (date.today() + timedelta(days=400)).isoformat())
+        self.assertEqual(items["Homemade jam"]["expires_on"], (date.today() + timedelta(days=20)).isoformat())
+
+    def test_ai_sets_storage_location(self):
+        self.c.put("/api/settings", json={"ai": {"ai_auto_shelf": False}}, headers=H)
+        guessed = self.post("/api/items", {"product": {"name": "Tortilla chips"}})          # pantry by category
+        chosen = self.post("/api/items", {"product_id": guessed["product_id"], "location": "freezer"})  # you chose
+        moved_by_you = self.post("/api/items", {"product_id": guessed["product_id"]})
+        self.c.patch(f"/api/items/{moved_by_you['item_id']}", json={"location": "freezer"}, headers=H)
+        self.c.patch(f"/api/items/{moved_by_you['item_id']}", json={"location": "pantry"}, headers=H)
+        FakeOllama.answers = {"Estimate how long": json.dumps(
+            {"category": "snacks", "pantry_days": 60, "fridge_days": 90, "freezer_days": None,
+             "opened_days": 14, "best_location": "fridge"})}
+        job = self.post(f"/api/products/{guessed['product_id']}/ai-shelf")["job"]
+        self.run_jobs()
+        r = self.c.get(f"/api/jobs/{job}").json["job"]["result"]
+        self.assertEqual((r["default_location"], r["moved"]), ("fridge", 1))
+        locs = {i["id"]: i for i in self.c.get("/api/items").json["items"]}
+        self.assertEqual(locs[guessed["item_id"]]["location"], "fridge")
+        # Dated from when it was added, with the fridge's days
+        self.assertEqual(locs[guessed["item_id"]]["expires_on"], (date.today() + timedelta(days=90)).isoformat())
+        self.assertEqual(locs[chosen["item_id"]]["location"], "freezer")
+        self.assertEqual(locs[moved_by_you["item_id"]]["location"], "pantry")
+        p = self.c.get(f"/api/products/{guessed['product_id']}").json["product"]
+        self.assertEqual(p["default_location"], "fridge")
+
+    def test_estimate_existing_stops_when_server_down(self):
+        self.c.put("/api/settings", json={"ai": {"ai_auto_shelf": False}}, headers=H)
+        for n in ("A thing", "B thing"):
+            self.post("/api/items", {"product": {"name": n}})
+        self.c.put("/api/settings", json={"ai": {"ai_base_url": "http://127.0.0.1:1"}}, headers=H)
+        job = self.post("/api/ai/shelf-all")["job"]
+        self.run_jobs()
+        r = self.c.get(f"/api/jobs/{job}").json["job"]
+        self.assertEqual(r["status"], "error")
+        self.assertIn("Stopped after 0 of 2", r["error"])
+
     def test_receipt_flow(self):
         self.post("/api/items", {"product": {"name": "Whole milk", "brand": "Great Value"}})
         FakeOllama.answers = {"grocery store receipt": json.dumps({

@@ -400,7 +400,9 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
         "\"pantry_days\": integer or null if it must not be kept at room temperature, "
         "\"fridge_days\": integer or null if not suitable, \"freezer_days\": integer or null if it shouldn't be frozen, "
         "\"opened_days\": days it keeps once opened (in its usual place) or null if not applicable, "
-        "\"best_location\": \"pantry\" | \"fridge\" | \"freezer\", \"note\": one short storage tip}")
+        "\"best_location\": where a household should normally keep it unopened, \"pantry\" (room temperature, "
+        "including produce like potatoes, onions, bananas and bread) | \"fridge\" | \"freezer\" (only for frozen foods), "
+        "\"note\": one short storage tip}")
     d = ask_json(p, "shelf", SYSTEM, prompt, None, 600)
     if not isinstance(d, dict):
         raise AIError("Unexpected answer for shelf life.")

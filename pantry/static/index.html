@@ -94,6 +94,12 @@ select{appearance:none;-webkit-appearance:none;background-image:var(--chev);back
 .it:hover{background:color-mix(in srgb,var(--bg) 60%,transparent)}
 .thumb{width:40px;height:40px;border-radius:8px;background:var(--bg);flex:0 0 40px;display:grid;place-items:center;overflow:hidden;font-size:20px}
 .thumb img{width:100%;height:100%;object-fit:cover}
+.thumb.zoomable{cursor:zoom-in}
+.photo-preview{display:block;width:100%;max-height:220px;object-fit:contain;background:var(--bg);border-radius:10px;margin:0 0 14px;cursor:zoom-in}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:60;display:none;align-items:center;justify-content:center;padding:16px;cursor:zoom-out}
+.lightbox.show{display:flex}
+.lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5);background:#fff}
+.lightbox .x{position:absolute;top:max(12px,env(safe-area-inset-top));right:14px;border:0;background:rgba(255,255,255,.15);color:#fff;width:40px;height:40px;border-radius:50%;font-size:24px;cursor:pointer}
 .it .main{flex:1;min-width:0}
 .it .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .it .meta{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -323,12 +329,19 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
           <div class="field ai-key-row"><label>API key</label><input type="password" id="ai-key" autocomplete="off"></div>
           <div class="field"><label>Text model</label><select id="ai-model"><option value="">First loaded model</option></select></div>
           <div class="field"><label>Image model</label><div><select id="ai-vmodel"><option value="">Same as text model</option></select><div class="tiny muted" style="margin-top:3px">Reads receipts and food photos. Needs a vision model (e.g. Qwen-VL, Gemma 3).</div></div></div>
-          <div class="field"><label>New products</label><label class="check small"><input type="checkbox" id="ai-autoshelf"> Ask the AI how long new products keep</label></div>
+          <div class="field"><label>New products</label><label class="check small"><input type="checkbox" id="ai-autoshelf"> Ask the AI how long new products keep and where to store them</label></div>
           <details style="margin:4px 0 8px"><summary>More options</summary>
             <div class="field" style="margin-top:10px"><label>Timeout</label><div class="row" style="gap:6px"><input type="number" id="ai-timeout" min="10" max="3600" style="width:90px"><span class="muted tiny">seconds per request</span></div></div>
             <div class="field"><label>Thinking</label><label class="check small"><input type="checkbox" id="ai-think"> Let reasoning models think first (slower)</label></div>
           </details>
           <div class="status-line small muted" id="ai-msg"></div>
+          <div style="border-top:1px solid var(--line);margin-top:14px;padding-top:12px">
+            <div class="small" id="shelf-status"></div>
+            <div class="row" style="margin-top:8px">
+              <button class="btn ai-btn" id="shelf-all">✦ Estimate shelf life &amp; storage for existing products</button>
+              <label class="check small muted"><input type="checkbox" id="shelf-redo"> Also re-check ones the AI already estimated</label>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -372,6 +385,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
 </div>
 
 <div class="modal-bg" id="modal-bg"><div class="modal" id="modal"></div></div>
+<div class="lightbox" id="lightbox"><button class="x" aria-label="Close">×</button><img alt=""></div>
 <div class="toast" id="toast"><span id="toast-text"></span><span id="toast-actions" class="row" style="flex-wrap:nowrap"></span></div>
 <input type="file" accept="image/*" capture="environment" id="file-photo" hidden>
 <input type="file" accept="image/*" capture="environment" id="file-receipt" hidden>
@@ -426,6 +440,18 @@ function expPill(it){
   return `<span class="pill ${cls}">${esc(relDays(it.days_left))}</span>`;
 }
 const qtyFmt=q=>Number.isInteger(q)?q:(+q).toFixed(1).replace(/\.0$/,'');
+// Open Food Facts serves small images (…200.jpg); the same photo exists at 400px.
+function bigImage(url){ return String(url||'').replace(/\.(100|200)\.jpg(\?.*)?$/,'.400.jpg'); }
+function openPhoto(url){
+  const lb=$('#lightbox'), img=lb.querySelector('img');
+  img.onerror=()=>{ img.onerror=null; img.src=url; };     // no 400px version: show the original
+  img.referrerPolicy='no-referrer'; img.src=bigImage(url); lb.classList.add('show');
+}
+function closePhoto(){ $('#lightbox').classList.remove('show'); }
+$('#lightbox').addEventListener('click',closePhoto);
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&$('#lightbox').classList.contains('show')){ e.stopImmediatePropagation(); closePhoto(); } },true);
+function photoPreview(it){ return it.image_url?`<img class="photo-preview" src="${esc(bigImage(it.image_url))}" alt="Photo of ${esc(it.name)}" referrerpolicy="no-referrer" data-photo="${esc(it.image_url)}" onerror="if(!this.dataset.f){this.dataset.f=1;this.src=this.dataset.photo}else{this.remove()}">`:''; }
+function bindPhotos(root){ root.querySelectorAll('[data-photo]').forEach(el=>el.onclick=e=>{ e.stopPropagation(); openPhoto(el.dataset.photo); }); }
 function thumb(it){ return it.image_url?`<div class="thumb"><img src="${esc(it.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createTextNode('${CAT_ICON[it.category]||'📦'}'))"></div>`:`<div class="thumb">${CAT_ICON[it.category]||'📦'}</div>`; }
 function catOptions(sel){ return CATS.map(c=>`<option value="${c.key}" ${c.key===sel?'selected':''}>${esc(c.label)}</option>`).join(''); }
 function locOptions(sel){ return LOCS.map(l=>`<option value="${l}" ${l===sel?'selected':''}>${LOC_LABEL[l]}</option>`).join(''); }
@@ -451,13 +477,14 @@ function updateBar(){
   const s=Math.round((Date.now()-first.t0)/1000); $('#ai-bar-time').textContent=s>=5?`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`:'';
 }
 setInterval(updateBar,1000);
-function pollJob(id,label,{quiet=false}={}){
+function pollJob(id,label,{quiet=false,progress=null}={}){
   return new Promise((resolve,reject)=>{
     if(!quiet){ running.set(id,{label,t0:Date.now()}); updateBar(); }
     let delay=1000;
     const tick=async()=>{
       let j; try{ j=(await api('/api/jobs/'+id)).job; }catch(e){ setTimeout(tick,4000); return; }
       if(j.status==='done'||j.status==='error'){ running.delete(id); updateBar(); j.status==='done'?resolve(j.result):reject(new Error(j.error||'Failed')); return; }
+      if(progress&&j.result&&running.has(id)){ running.get(id).label=progress(j.result); updateBar(); if(progress.cb) progress.cb(j.result); }
       delay=Math.min(delay*1.3,4000); setTimeout(tick,delay);
     };
     setTimeout(tick,700);
@@ -582,7 +609,7 @@ async function itemModal(id){
   if(!it){ toast('That item is gone.'); return; }
   const m=openModal(`
     <div class="modal-head">${thumb(it)}<h2>${esc(it.name)}<div class="tiny muted" style="font-weight:400">${esc([it.brand,it.size_text,it.category_label].filter(Boolean).join(' · '))}</div></h2><button class="x" data-close>×</button></div>
-    <div class="modal-body">
+    <div class="modal-body">${photoPreview(it)}
       <div class="field"><label>Quantity</label><div class="stepper"><button data-q="-1">−</button><span id="im-q">${qtyFmt(it.quantity)}</span><button data-q="1">+</button></div></div>
       <div class="field"><label>Stored in</label><select id="im-loc">${locOptions(it.location)}</select></div>
       <div class="field"><label>Good until</label><div class="row" style="flex-wrap:nowrap"><input type="date" id="im-exp" value="${it.expires_on||''}">${it.expires_source==='auto'?'<span class="pill">estimated</span>':'<button class="btn small" id="im-auto">Estimate</button>'}</div></div>
@@ -593,6 +620,8 @@ async function itemModal(id){
     </div>
     <div class="modal-foot"><button class="btn primary" id="im-save">Save</button><span class="spacer"></span>
       <button class="btn" id="im-use1">Used 1</button><button class="btn" id="im-useall">Used up</button><button class="btn danger" id="im-toss">Toss</button></div>`);
+  if(it.image_url){ const t=m.querySelector('.modal-head .thumb'); t.classList.add('zoomable'); t.dataset.photo=it.image_url; }
+  bindPhotos(m);
   let q=it.quantity;
   m.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{ q=Math.max(.5,q+ +b.dataset.q); $('#im-q').textContent=qtyFmt(q); });
   const autoBtn=m.querySelector('#im-auto'); if(autoBtn) autoBtn.onclick=()=>{ $('#im-exp').value=''; autoBtn.textContent='Will estimate'; };
@@ -614,7 +643,7 @@ async function productModal(pid){
   const d=(k,loc)=>p[k]??'';
   const m=openModal(`
     <div class="modal-head"><h2>${esc(p.name)}</h2><button class="x" data-close>×</button></div>
-    <div class="modal-body">
+    <div class="modal-body">${photoPreview(p)}
       <div class="field"><label>Name</label><input type="text" id="pm-name" value="${esc(p.name)}"></div>
       <div class="field"><label>Brand</label><input type="text" id="pm-brand" value="${esc(p.brand||'')}"></div>
       <div class="field"><label>Size</label><input type="text" id="pm-size" value="${esc(p.size_text||'')}"></div>
@@ -627,6 +656,7 @@ async function productModal(pid){
       <div class="field"><label>Once opened</label><input type="number" min="0" id="pm-opened" value="${d('opened_days')}" placeholder="${p.effective_opened_days??'—'}"></div>
     </div>
     <div class="modal-foot"><button class="btn primary" id="pm-save">Save</button>${ME.ai_enabled?'<button class="btn ai-btn" id="pm-ai">✦ Ask AI</button>':''}<span class="spacer"></span><button class="btn" data-close>Cancel</button></div>`);
+  bindPhotos(m);
   $('#pm-save').onclick=()=>safe(async()=>{
     const num=id=>{const v=$(id).value.trim(); return v===''?null:+v;};
     const f={name:$('#pm-name').value,brand:$('#pm-brand').value||null,size_text:$('#pm-size').value||null,category:$('#pm-cat').value,
@@ -638,7 +668,7 @@ async function productModal(pid){
   const aib=m.querySelector('#pm-ai'); if(aib) aib.onclick=()=>safe(async()=>{
     const {job}=await api(`/api/products/${pid}/ai-shelf`,{json:{}}); closeModal();
     const r=await pollJob(job,`Asking the AI how long ${p.name} keeps…`);
-    toast(`${r.name}: ${['pantry','fridge','freezer'].map(l=>r['shelf_'+l+'_days']!=null?LOC_LABEL[l]+' '+r['shelf_'+l+'_days']+'d':null).filter(Boolean).join(', ')}${r.note?'. '+r.note:''}`,[],9000); render();
+    toast(`${r.name}: ${r.default_location?'keep in the '+LOC_LABEL[r.default_location].toLowerCase()+'. ':''}${['pantry','fridge','freezer'].map(l=>r['shelf_'+l+'_days']!=null?LOC_LABEL[l]+' '+r['shelf_'+l+'_days']+'d':null).filter(Boolean).join(', ')}${r.moved?` (moved ${r.moved})`:''}${r.note?'. '+r.note:''}`,[],9000); render();
   });
 }
 
@@ -961,6 +991,27 @@ $('#ai-provider').addEventListener('change',async()=>{
 ['#ai-model','#ai-vmodel','#ai-autoshelf','#ai-think','#ai-timeout','#ai-key'].forEach(id=>$(id).addEventListener('change',saveAISettings));
 $('#ai-url').addEventListener('change',async()=>{ aiFieldsVisibility(); await saveAISettings(); loadModels(false); });
 $('#ai-connect').addEventListener('click',()=>loadModels(false));
+let shelfWatching=null;
+async function renderShelfStatus(){
+  const st=await api('/api/ai/shelf-status');
+  const total=st.defaults+st.ai+st.manual;
+  $('#shelf-status').innerHTML=total?`<b>Shelf life &amp; storage:</b> ${st.defaults} product${st.defaults!==1?'s':''} on category defaults, ${st.ai} estimated by AI, ${st.manual} set by you.`:'<b>Shelf life:</b> no products yet.';
+  $('#shelf-all').disabled=!ME.ai_enabled||!total;
+  if(st.job&&shelfWatching!==st.job) watchShelfAll(st.job);
+}
+function watchShelfAll(job){
+  shelfWatching=job; $('#shelf-all').disabled=true;
+  const prog=r=>r.total?`Estimating shelf life: ${r.done} of ${r.total}${r.current?` (${r.current})`:''}`:'Estimating shelf life…';
+  pollJob(job,'Estimating shelf life…',{progress:prog}).then(r=>{
+    const f=r.failed.length;
+    toast(r.total?`Shelf life updated for ${r.updated} product${r.updated!==1?'s':''}${r.moved?`, ${r.moved} item${r.moved!==1?'s':''} moved to a better spot`:''}${f?`; ${f} failed (${r.failed[0].name}: ${r.failed[0].error})`:''}.`:'Nothing to estimate: every product already has a shelf life from the AI or you.',[],f?9000:4500);
+  }).catch(e=>toast(e.message,[],9000)).finally(()=>{ shelfWatching=null; if(view==='settings') renderShelfStatus(); else if(view==='home'||view==='pantry') render(); });
+}
+$('#shelf-all').addEventListener('click',()=>safe(async()=>{
+  const {job}=await api('/api/ai/shelf-all',{json:{redo:$('#shelf-redo').checked}});
+  toast('Working through your products in the background. You can leave this page.');
+  watchShelfAll(job);
+}));
 async function renderSettings(){
   const d=await api('/api/settings'); const s=d.settings, a=d.ai;
   $('#set-sub').textContent=`Signed in as ${ME.user.name}${ME.user.is_admin?' (admin)':''}.`;
@@ -970,7 +1021,7 @@ async function renderSettings(){
   $('#ai-model').innerHTML=modelOptions([],a.ai_model,'First loaded model'); $('#ai-vmodel').innerHTML=modelOptions([],a.ai_vision_model,'Same as text model');
   $('#ai-timeout').value=a.ai_timeout; $('#ai-autoshelf').checked=a.ai_auto_shelf==='1'; $('#ai-think').checked=a.ai_think==='1';
   $('#ai-key').value=''; $('#ai-key').placeholder=a.ai_api_key_set==='1'?'saved (type to replace)':'sk-ant-…';
-  aiFieldsVisibility(); loadModels(true);
+  aiFieldsVisibility(); loadModels(true); renderShelfStatus();
   const {users}=await api('/api/users');
   $('#users-list').innerHTML=users.map(u=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(u.name)}</b>${u.is_admin?'<span class="pill">admin</span>':''}${u.id===ME.user.id?'<span class="pill ok">you</span>':''}<span class="spacer"></span>${ME.user.is_admin&&u.id!==ME.user.id?`<button class="btn small" data-reset="${u.id}">Reset password</button><button class="btn small danger" data-deluser="${u.id}">Remove</button>`:''}</div>`).join('');
   $('#users-add-row').style.display=ME.user.is_admin?'':'none';

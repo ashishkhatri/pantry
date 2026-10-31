@@ -1,6 +1,7 @@
 """Flask web app: JSON API under /api plus the single-page PWA in static/."""
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import threading
@@ -602,6 +603,26 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         except ai.AIError as e:
             raise ApiError(str(e), 400)   # not 502: Cloudflare replaces 5xx bodies with its own page
 
+    @app.get("/api/ai/shelf-status")
+    def ai_shelf_status():
+        c = con()
+        counts = dict(c.execute("SELECT shelf_source, COUNT(*) FROM products GROUP BY shelf_source").fetchall())
+        job = c.execute("SELECT id FROM jobs WHERE kind = 'shelf_all' AND status IN ('queued', 'running') "
+                        "ORDER BY created_at DESC LIMIT 1").fetchone()
+        return jsonify(defaults=counts.get("category", 0), ai=counts.get("ai", 0), manual=counts.get("manual", 0),
+                       job=job[0] if job else None)
+
+    @app.post("/api/ai/shelf-all")
+    def ai_shelf_all():
+        c = con()
+        if not ai.enabled(c):
+            raise ApiError("Set up AI first.")
+        job = c.execute("SELECT id FROM jobs WHERE kind = 'shelf_all' AND status IN ('queued', 'running') "
+                        "LIMIT 1").fetchone()
+        if job:
+            return jsonify(job=job[0])
+        return jsonify(job=runner.submit(c, "shelf_all", {"redo": bool(body().get("redo"))}, uid()))
+
     @app.post("/api/ai/test")
     def ai_test():
         override = body().get("ai") or None
@@ -750,20 +771,63 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
     def receipt_failed(c, payload, **_):
         c.execute("UPDATE receipts SET status = 'error' WHERE id = ?", (payload["receipt_id"],))
 
+    def apply_ai_shelf(c, p):
+        res = ai.shelf_life(c, p["name"], p["brand"], p["category"], p["size_text"])
+        fields = {k: res[k] for k in ("shelf_pantry_days", "shelf_fridge_days", "shelf_freezer_days", "opened_days")}
+        fields["shelf_source"] = "ai"
+        if res.get("category") in shelf.CATEGORIES:
+            fields["category"] = res["category"]
+        moved = 0
+        new_loc = res.get("default_location")
+        with c:
+            if new_loc in dbm.LOCATIONS and new_loc != p["default_location"]:
+                fields["default_location"] = new_loc
+                # Move items that are where Pantry guessed (the old default) and that nobody has moved
+                # since. Items you put somewhere on purpose stay put. Their dates are recalculated
+                # from when they were added, by update_product below.
+                moved = c.execute(
+                    "UPDATE items SET location = ?, notified_stage = 0 WHERE product_id = ? AND finished_on IS NULL "
+                    "AND location = ? AND NOT EXISTS (SELECT 1 FROM events e WHERE e.item_id = items.id AND e.kind = 'move')",
+                    (new_loc, p["id"], p["default_location"])).rowcount
+            inventory.update_product(c, p["id"], fields)    # also re-dates items in stock (not ones you dated)
+        return {**res, "moved": moved}
+
     def shelf_job(c, payload, **_):
         p = inventory.get_product(c, payload["product_id"])
         if not p:
             return {"skipped": "product deleted"}
         if p["shelf_source"] == "manual" and not payload.get("force"):
             return {"skipped": "you set this product's shelf life yourself"}
-        res = ai.shelf_life(c, p["name"], p["brand"], p["category"], p["size_text"])
-        fields = {k: res[k] for k in ("shelf_pantry_days", "shelf_fridge_days", "shelf_freezer_days", "opened_days")}
-        fields["shelf_source"] = "ai"
-        if res.get("category") in shelf.CATEGORIES:
-            fields["category"] = res["category"]
-        with c:
-            inventory.update_product(c, p["id"], fields)
+        res = apply_ai_shelf(c, p)
         return {**res, "product_id": p["id"], "name": p["name"]}
+
+    def shelf_all(c, payload, jid, **_):
+        """Ask the AI about every product still on category defaults (and, with redo, ones it
+        already estimated). Never touches products whose shelf life you set yourself."""
+        sources = ("category", "ai") if payload.get("redo") else ("category",)
+        rows = c.execute(
+            f"SELECT p.*, EXISTS(SELECT 1 FROM items i WHERE i.product_id = p.id AND i.finished_on IS NULL) AS stocked "
+            f"FROM products p WHERE p.shelf_source IN ({','.join('?' * len(sources))}) "
+            f"ORDER BY stocked DESC, p.name COLLATE NOCASE", sources).fetchall()
+        done, updated, failed, streak, moved = 0, [], [], 0, 0
+        for p in rows:
+            with c:
+                c.execute("UPDATE jobs SET result = ? WHERE id = ?", (json.dumps(
+                    {"done": done, "total": len(rows), "current": p["name"], "updated": len(updated),
+                     "failed": len(failed)}), jid))
+            try:
+                r = apply_ai_shelf(c, p)
+                updated.append(p["name"])
+                moved += r["moved"]
+                streak = 0
+            except ai.AIError as e:
+                failed.append({"name": p["name"], "error": str(e)})
+                streak += 1
+                # The server is down or unusable: stop rather than fail every product the same way.
+                if isinstance(e, ai.NotConfigured) or "isn't answering" in str(e) or streak >= 3:
+                    raise ai.AIError(f"Stopped after {len(updated)} of {len(rows)} products: {e}") from e
+            done += 1
+        return {"done": done, "total": len(rows), "updated": len(updated), "failed": failed, "moved": moved}
 
     def mealdb(c, payload, **_):
         return recipes.fetch_mealdb(c)
@@ -780,5 +844,6 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
     runner.register("receipt", receipt)
     runner.register("receipt:failed", receipt_failed)
     runner.register("shelf", shelf_job)
+    runner.register("shelf_all", shelf_all)
     runner.register("mealdb", mealdb)
     runner.register("recipes", recipes_ai)
