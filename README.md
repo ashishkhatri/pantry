@@ -179,6 +179,10 @@ With AI on, each **new** product is sent to the AI once.
 - It works through every product still on category defaults, in the background, with progress in the top bar.
 - Tick *Also re-check…* to redo ones the AI already estimated.
 
+**Opened items:** every product has two places, where it's kept unopened and where it goes once opened. Sauces, condiments, jams, canned goods, broth, juice and shelf-stable milk go pantry → fridge; rice and cereal stay in the pantry. The AI sets both, and you can change either in **Product & shelf-life settings**.
+- **Marking an item *Opened*** moves it to the opened place and shortens its date. The date counts from when you bought it and from opening, whichever runs out first.
+- **When adding something already open** (a half-used sauce from the fridge), tick **Already opened**.
+
 **Moving items:** when the AI picks a different storage place, items in stock move there only if they're still where Pantry guessed. Anything you put somewhere yourself, or moved, stays put. Moved items are re-dated for their new place, counted from when they were added.
 
 **Your own numbers win:** you can change any product's numbers under **item → Product & shelf-life settings**, and the AI never overwrites them.

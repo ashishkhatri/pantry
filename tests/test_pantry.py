@@ -181,6 +181,38 @@ class InventoryTests(Base):
         self.c.patch(f"/api/products/{r2['product_id']}", json={"name": "Rice cakes", "default_location": "pantry"}, headers=H)
         self.assertEqual(self.c.get(f"/api/products/{r2['product_id']}").json["product"]["shelf_source"], "category")
 
+    def test_opening_moves_to_opened_location(self):
+        # Sauces live in the pantry unopened and the fridge once opened (category default)
+        r = self.add("Sriracha hot sauce")
+        it = r["item"]
+        self.assertEqual((it["location"], it["opened_location"]), ("pantry", "fridge"))
+        self.c.patch(f"/api/items/{r['item_id']}", json={"opened": True}, headers=H)
+        it = [i for i in self.c.get("/api/items").json["items"] if i["id"] == r["item_id"]][0]
+        self.assertEqual(it["location"], "fridge")
+        self.assertEqual(it["expires_on"], (date.today() + timedelta(days=60)).isoformat())   # condiments: 60 days opened
+        self.assertIn("(opened)", self.c.get("/api/history").json["events"][0]["note"])
+        # Rice stays put when opened
+        r = self.add("Jasmine rice")
+        self.c.patch(f"/api/items/{r['item_id']}", json={"opened": True}, headers=H)
+        it = [i for i in self.c.get("/api/items").json["items"] if i["id"] == r["item_id"]][0]
+        self.assertEqual(it["location"], "pantry")
+
+    def test_add_already_opened(self):
+        r = self.add("Ketchup", opened=True)
+        self.assertEqual(r["item"]["location"], "fridge")
+        self.assertEqual(r["item"]["opened_on"], date.today().isoformat())
+        # Your own choice of place wins
+        r = self.add("Ketchup", opened=True, location="pantry")
+        self.assertEqual(r["item"]["location"], "pantry")
+
+    def test_opened_location_setting_is_yours(self):
+        r = self.add("Maple syrup")                      # category sugar: pantry, stays pantry opened
+        self.c.patch(f"/api/products/{r['product_id']}", json={"opened_location": "fridge"}, headers=H)
+        p = self.c.get(f"/api/products/{r['product_id']}").json["product"]
+        self.assertEqual((p["effective_opened_location"], p["shelf_source"]), ("fridge", "manual"))
+        self.c.patch(f"/api/items/{r['item_id']}", json={"opened": True}, headers=H)
+        self.assertEqual(self.c.get("/api/items").json["items"][0]["location"], "fridge")
+
     def test_product_shelf_override_recalculates(self):
         r = self.add("Sourdough")
         self.c.patch(f"/api/products/{r['product_id']}", json={"shelf_pantry_days": 3}, headers=H)
@@ -491,7 +523,7 @@ class AITests(Base):
         self.c.patch(f"/api/items/{moved_by_you['item_id']}", json={"location": "pantry"}, headers=H)
         FakeOllama.answers = {"Estimate how long": json.dumps(
             {"category": "snacks", "pantry_days": 60, "fridge_days": 90, "freezer_days": None,
-             "opened_days": 14, "best_location": "fridge"})}
+             "opened_days": 14, "best_location": "fridge", "opened_location": "fridge"})}
         job = self.post(f"/api/products/{guessed['product_id']}/ai-shelf")["job"]
         self.run_jobs()
         r = self.c.get(f"/api/jobs/{job}").json["job"]["result"]
@@ -503,7 +535,7 @@ class AITests(Base):
         self.assertEqual(locs[chosen["item_id"]]["location"], "freezer")
         self.assertEqual(locs[moved_by_you["item_id"]]["location"], "pantry")
         p = self.c.get(f"/api/products/{guessed['product_id']}").json["product"]
-        self.assertEqual(p["default_location"], "fridge")
+        self.assertEqual((p["default_location"], p["effective_opened_location"]), ("fridge", "fridge"))
 
     def test_estimate_existing_stops_when_server_down(self):
         self.c.put("/api/settings", json={"ai": {"ai_auto_shelf": False}}, headers=H)

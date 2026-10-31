@@ -13,7 +13,7 @@ from . import db as dbm
 from . import shelf
 from .lookup import normalize_barcode
 
-PRODUCT_FIELDS = ("barcode", "name", "brand", "category", "size_text", "image_url", "default_location",
+PRODUCT_FIELDS = ("barcode", "name", "brand", "category", "size_text", "image_url", "default_location", "opened_location",
                   "shelf_pantry_days", "shelf_fridge_days", "shelf_freezer_days", "opened_days", "shelf_source")
 
 
@@ -66,6 +66,7 @@ def product_dict(con, p) -> dict:
     d["category_label"] = info["label"]
     d["effective_days"] = {loc: shelf.shelf_days(p, loc) for loc in dbm.LOCATIONS}
     d["effective_opened_days"] = shelf.opened_days(p)
+    d["effective_opened_location"] = shelf.opened_location(p)
     row = con.execute("SELECT COALESCE(SUM(quantity),0) FROM items WHERE product_id = ? AND finished_on IS NULL",
                       (p["id"],)).fetchone()
     d["in_stock"] = row[0]
@@ -111,7 +112,7 @@ def update_product(con, product_id: int, fields: dict, recalc: bool = True) -> N
                     raise InventoryError(f"That barcode already belongs to {other['name']}.")
         if k == "category" and v not in shelf.CATEGORIES:
             raise InventoryError("Unknown category.")
-        if k == "default_location":
+        if k == "default_location" or (k == "opened_location" and v):
             _check_location(v)
         if k.endswith("_days") and v not in (None, ""):
             v = max(0, int(v))
@@ -171,11 +172,14 @@ def _event(con, kind, product_id, item_id=None, user_id=None, quantity=None, not
 
 def add_item(con, product_id: int, location: Optional[str] = None, quantity: float = 1, expires_on: Optional[str] = None,
              source: str = "manual", user_id: Optional[int] = None, added_on: Optional[str] = None,
-             note: Optional[str] = None) -> int:
+             note: Optional[str] = None, opened: bool = False) -> int:
+    """Add stock. ``opened`` = it's already open (e.g. a half-used sauce): it goes where opened ones
+    are kept, unless you chose a location, and gets the shorter opened date."""
     p = get_product(con, product_id)
     if not p:
         raise InventoryError("Product not found.")
-    location = _check_location(location or p["default_location"])
+    default_loc = shelf.opened_location(p) if opened else p["default_location"]
+    location = _check_location(location or default_loc)
     quantity = float(quantity or 1)
     if quantity <= 0:
         raise InventoryError("Quantity must be more than zero.")
@@ -183,11 +187,12 @@ def add_item(con, product_id: int, location: Optional[str] = None, quantity: flo
     if expires_on:
         exp, src = date.fromisoformat(expires_on), "manual"
     else:
-        exp, src = compute_expiry(p, location, added), "auto"
+        exp, src = compute_expiry(p, location, added, today() if opened else None), "auto"
     cur = con.execute(
-        "INSERT INTO items(product_id, location, quantity, added_on, expires_on, expires_source, source, added_by, note) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (product_id, location, quantity, added.isoformat(), _iso(exp), src, source, user_id, note))
+        "INSERT INTO items(product_id, location, quantity, added_on, expires_on, expires_source, source, added_by, note, "
+        "opened_on) VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (product_id, location, quantity, added.isoformat(), _iso(exp), src, source, user_id, note,
+         today().isoformat() if opened else None))
     _event(con, "add", product_id, cur.lastrowid, user_id, quantity, source)
     con.execute("UPDATE products SET updated_at = datetime('now') WHERE id = ?", (product_id,))
     return cur.lastrowid
@@ -258,6 +263,15 @@ def update_item(con, item_id: int, fields: dict, user_id: Optional[int] = None) 
         elif not fields["opened"]:
             opened_on = None
     newly_opened = "opened" in fields and fields["opened"] and not it["opened_on"]
+    if newly_opened and not changed_loc:
+        # Opening moves it where opened ones live (sauce -> fridge). The date counts from when it was
+        # bought and from opening, whichever runs out first, so this isn't a fresh start.
+        target = shelf.opened_location(p)
+        if target != location:
+            _event(con, "move", p["id"], item_id, user_id, note=f"{location} -> {target} (opened)")
+            location = target
+            if expires_source == "auto":
+                expires_on = _iso(compute_expiry(p, location, date.fromisoformat(it["added_on"]), opened_on))
     if changed_loc:
         # Moving to/from the freezer restarts the clock from today; a printed date no longer applies.
         expires_on, expires_source = _iso(compute_expiry(p, location, today(), opened_on)), "auto"
@@ -300,7 +314,8 @@ def delete_item(con, item_id: int) -> None:
 # ---------------- queries ----------------
 
 ITEM_SELECT = """
-SELECT i.*, p.name, p.brand, p.category, p.size_text, p.image_url, p.barcode, u.name AS added_by_name
+SELECT i.*, p.name, p.brand, p.category, p.size_text, p.image_url, p.barcode, p.opened_location AS product_opened_location,
+       u.name AS added_by_name
 FROM items i JOIN products p ON p.id = i.product_id LEFT JOIN users u ON u.id = i.added_by
 """
 
@@ -309,6 +324,8 @@ def _item_out(r, warn_days: int) -> dict:
     d = dict(r)
     d.update(expiry_status(r["expires_on"], warn_days))
     d["category_label"] = shelf.category_info(r["category"])["label"]
+    d["opened_location"] = r["product_opened_location"] or shelf.opened_location_for_category(r["category"])
+    d.pop("product_opened_location", None)
     return d
 
 

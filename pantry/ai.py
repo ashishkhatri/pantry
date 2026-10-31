@@ -404,6 +404,8 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
         "including produce like potatoes, onions, bananas and bread) | \"fridge\" | \"freezer\" (only for frozen foods). "
         "If the product is sold both refrigerated and shelf-stable (plant milks, juice, tofu, some sauces) and the name "
         "doesn't say shelf-stable, assume the refrigerated version, the safer choice, "
+        "\"opened_location\": where it must be kept once opened, e.g. ketchup, sauces, jam, canned goods and "
+        "shelf-stable milk go to \"fridge\" once opened, while rice, cereal and peanut butter stay in \"pantry\", "
         "\"note\": one short storage tip}")
     d = ask_json(p, "shelf", SYSTEM, prompt, None, 600)
     if not isinstance(d, dict):
@@ -415,6 +417,7 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
             "shelf_freezer_days": _int_or_none(d.get("freezer_days")),
             "opened_days": _int_or_none(d.get("opened_days")),
             "default_location": loc,
+            "opened_location": d.get("opened_location") if d.get("opened_location") in dbm.LOCATIONS else None,
             "note": str(d.get("note") or "")[:200]}
 
 

@@ -120,6 +120,10 @@ MIGRATIONS = {
         fetched_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
     """,
+    2: """
+    -- Where a product goes once opened (e.g. sauces: pantry -> fridge). NULL = the category's default.
+    ALTER TABLE products ADD COLUMN opened_location TEXT;
+    """,
 }
 
 DEFAULT_SETTINGS: Dict[str, str] = {

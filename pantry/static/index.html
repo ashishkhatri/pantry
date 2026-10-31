@@ -611,7 +611,7 @@ async function itemModal(id){
       <div class="field"><label>Quantity</label><div class="stepper"><button data-q="-1">−</button><span id="im-q">${qtyFmt(it.quantity)}</span><button data-q="1">+</button></div></div>
       <div class="field"><label>Stored in</label><select id="im-loc">${locOptions(it.location)}</select></div>
       <div class="field"><label>Good until</label><div class="row" style="flex-wrap:nowrap"><input type="date" id="im-exp" value="${it.expires_on||''}">${it.expires_source==='auto'?'<span class="pill">estimated</span>':'<button class="btn small" id="im-auto">Estimate</button>'}</div></div>
-      <div class="field"><label>Opened</label><label class="check"><input type="checkbox" id="im-open" ${it.opened_on?'checked':''}> ${it.opened_on?'since '+esc(fmtDate(it.opened_on)):'Mark as opened (shortens the date)'}</label></div>
+      <div class="field"><label>Opened</label><label class="check"><input type="checkbox" id="im-open" ${it.opened_on?'checked':''}> ${it.opened_on?'since '+esc(fmtDate(it.opened_on)):(it.opened_location&&it.opened_location!==it.location?`Mark as opened (moves it to the ${LOC_LABEL[it.opened_location].toLowerCase()}, shortens the date)`:'Mark as opened (shortens the date)')}</label></div>
       <div class="field"><label>Note</label><input type="text" id="im-note" value="${esc(it.note||'')}"></div>
       <p class="tiny muted">Added ${esc(fmtDate(it.added_on))}${it.added_by_name?' by '+esc(it.added_by_name):''} · ${esc(it.source)}${it.barcode?' · barcode '+esc(it.barcode):''}</p>
       <button class="btn small" id="im-product">Product &amp; shelf-life settings…</button>
@@ -647,6 +647,7 @@ async function productModal(pid){
       <div class="field"><label>Size</label><input type="text" id="pm-size" value="${esc(p.size_text||'')}"></div>
       <div class="field"><label>Category</label><select id="pm-cat">${catOptions(p.category)}</select></div>
       <div class="field"><label>Usually kept in</label><select id="pm-loc">${locOptions(p.default_location)}</select></div>
+      <div class="field"><label>Once opened, keep in</label><select id="pm-oloc">${locOptions(p.effective_opened_location)}</select></div>
       <div class="field"><label>Barcode</label><input type="text" id="pm-bc" value="${esc(p.barcode||'')}" inputmode="numeric"></div>
       <h3 style="margin-top:16px">Keeps for (days) <span class="pill ${p.shelf_source==='ai'?'ai':''}">${p.shelf_source==='ai'?'AI estimate':p.shelf_source==='manual'?'set by you':'category default'}</span></h3>
       <p class="tiny muted" style="margin-top:-4px">Leave blank to use the category default (shown faded). Changing these updates estimated dates on items in stock.</p>
@@ -660,6 +661,7 @@ async function productModal(pid){
     const num=id=>{const v=$(id).value.trim(); return v===''?null:+v;};
     const f={name:$('#pm-name').value,brand:$('#pm-brand').value||null,size_text:$('#pm-size').value||null,category:$('#pm-cat').value,
       default_location:$('#pm-loc').value,barcode:$('#pm-bc').value||null};
+    if($('#pm-oloc').value!==p.effective_opened_location) f.opened_location=$('#pm-oloc').value;
     const shelf={shelf_pantry_days:num('#pm-pantry'),shelf_fridge_days:num('#pm-fridge'),shelf_freezer_days:num('#pm-freezer'),opened_days:num('#pm-opened')};
     if(['pantry','fridge','freezer'].some(l=>shelf['shelf_'+l+'_days']!==p['shelf_'+l+'_days'])||shelf.opened_days!==p.opened_days) Object.assign(f,shelf);
     await api('/api/products/'+pid,{method:'PATCH',json:f}); closeModal(); toast('Saved.'); render();
@@ -686,16 +688,23 @@ function confirmModal(sug,{title='Add to pantry',source='manual'}={}){
         <div class="field"><label>Category</label><select id="cf-cat">${catOptions(cat)}</select></div>`}
         <div class="field"><label>How many</label><div class="stepper"><button data-q="-1">−</button><span id="cf-q">1</span><button data-q="1">+</button></div></div>
         <div class="field"><label>Store in</label><select id="cf-loc">${locOptions(loc)}</select></div>
+        <div class="field"><label>Opened</label><label class="check small"><input type="checkbox" id="cf-open"> Already opened <span class="muted" id="cf-open-hint"></span></label></div>
         <div class="field"><label>Good until</label><div><input type="date" id="cf-exp"><div class="tiny muted" id="cf-exp-hint">Leave blank to estimate.</div></div></div>
       </div>
       <div class="modal-foot"><button class="btn primary" id="cf-ok">Add</button><span class="spacer"></span><button class="btn" data-close>Cancel</button></div>`);
     let q=1; m.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{ q=Math.max(1,q+ +b.dataset.q); $('#cf-q').textContent=q; });
     const catSel=m.querySelector('#cf-cat');
-    if(catSel) catSel.onchange=()=>{ const c=CATS.find(c=>c.key===catSel.value); if(c) $('#cf-loc').value=c.default_location; };
+    // Where it goes unopened / opened: the product's own settings, else its category's.
+    const places=()=>{ if(sug.product_id) return [sug.default_location||loc, sug.effective_opened_location||sug.default_location||loc];
+      const c=CATS.find(c=>c.key===(catSel?catSel.value:cat))||{}; return [c.default_location||loc, c.opened_location||c.default_location||loc]; };
+    const syncLoc=()=>{ const [u,o]=places(), opened=$('#cf-open').checked; $('#cf-loc').value=opened?o:u;
+      $('#cf-open-hint').textContent=o!==u?`(goes in the ${LOC_LABEL[o].toLowerCase()}, shorter date)`:'(shorter date)'; };
+    if(catSel) catSel.onchange=syncLoc;
+    $('#cf-open').onchange=syncLoc; syncLoc();
     const done=v=>{ resolve(v); };
     m.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{ closeModal(); done(null); });
     $('#cf-ok').onclick=()=>safe(async()=>{
-      const body={quantity:q,location:$('#cf-loc').value,expires_on:$('#cf-exp').value||null,source};
+      const body={quantity:q,location:$('#cf-loc').value,expires_on:$('#cf-exp').value||null,source,opened:$('#cf-open').checked};
       if(sug.product_id) body.product_id=sug.product_id;
       else{
         const name=$('#cf-name').value.trim(); if(!name){ $('#cf-name').focus(); return; }

@@ -62,6 +62,16 @@ CATEGORIES: Dict[str, Tuple[str, Optional[int], Optional[int], Optional[int], Op
     "other":          ("Other",                 180,  14,   180,  14,   "pantry"),
 }
 
+# Where these go once opened, when that's not where they're kept unopened.
+OPENED_FRIDGE = {"plant_milk", "canned", "jarred_sauce", "condiments", "soup_broth", "baby", "juice", "beverages",
+                 "tortillas"}
+
+
+def opened_location_for_category(cat: str) -> str:
+    loc = CATEGORIES.get(cat, CATEGORIES["other"])[5]
+    return "fridge" if loc == "pantry" and cat in OPENED_FRIDGE else loc
+
+
 # Keyword rules, checked in order; first match wins. Word-boundary matched on a
 # lower-cased name, so put specific phrases before generic words.
 KEYWORDS: List[Tuple[str, str]] = [
@@ -158,7 +168,8 @@ def guess_category(name: str, off_tags: Iterable[str] = ()) -> str:
 def category_info(cat: str) -> dict:
     label, pantry, fridge, freezer, opened, loc = CATEGORIES.get(cat, CATEGORIES["other"])
     return {"key": cat if cat in CATEGORIES else "other", "label": label, "pantry_days": pantry,
-            "fridge_days": fridge, "freezer_days": freezer, "opened_days": opened, "default_location": loc}
+            "fridge_days": fridge, "freezer_days": freezer, "opened_days": opened, "default_location": loc,
+            "opened_location": opened_location_for_category(cat)}
 
 
 def all_categories() -> List[dict]:
@@ -181,6 +192,14 @@ def shelf_days(product, location: str) -> Optional[int]:
     if location == "fridge":       # shelf-stable in the fridge keeps at least as long; thawed frozen food ~3 days
         return raw("pantry") if raw("pantry") is not None else 3
     return raw("fridge") or raw("pantry")   # freezing never shortens it
+
+
+def opened_location(product) -> str:
+    """Where an item of this product goes once opened: its own setting, else the category's."""
+    own = product["opened_location"] if "opened_location" in product.keys() else None
+    if own:
+        return own
+    return opened_location_for_category(product["category"])
 
 
 def opened_days(product) -> Optional[int]:

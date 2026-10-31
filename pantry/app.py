@@ -310,7 +310,7 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         with c:
             pid, created = _product_for(c, b)
             item_id = inventory.add_item(c, pid, b.get("location"), b.get("quantity") or 1, b.get("expires_on") or None,
-                                         b.get("source") or "manual", uid())
+                                         b.get("source") or "manual", uid(), opened=bool(b.get("opened")))
         job = _maybe_ai_shelf(c, pid, created)
         it = inventory.list_items(c, product_id=pid)
         return jsonify(item_id=item_id, product_id=pid, created_product=created, shelf_job=job,
@@ -399,7 +399,9 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         c0 = con()
         cur = inventory.get_product(c0, product_id)
         # Your own shelf-life numbers or storage place: the AI won't override them later.
-        if any(k.endswith("_days") for k in b) or (cur and b.get("default_location") not in (None, cur["default_location"])):
+        if any(k.endswith("_days") for k in b) or (cur and (
+                b.get("default_location") not in (None, cur["default_location"])
+                or ("opened_location" in b and (b["opened_location"] or None) != cur["opened_location"]))):
             b.setdefault("shelf_source", "manual")
         c = con()
         with c:
@@ -782,6 +784,8 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
             fields["category"] = res["category"]
         moved = 0
         new_loc = res.get("default_location")
+        if res.get("opened_location"):
+            fields["opened_location"] = res["opened_location"]
         with c:
             if new_loc in dbm.LOCATIONS and new_loc != p["default_location"]:
                 fields["default_location"] = new_loc
