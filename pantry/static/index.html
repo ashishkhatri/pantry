@@ -156,12 +156,28 @@ select{appearance:none;-webkit-appearance:none;background-image:var(--chev);back
 .mode-out .scanner .frame{border-style:dashed}
 .scan-log .it{cursor:default}
 
-/* recipes */
-.recipes{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px}
-.recipe{padding:0;overflow:hidden;cursor:pointer;display:flex;flex-direction:column}
-.recipe img{width:100%;height:150px;object-fit:cover;display:block;background:var(--bg)}
-.recipe .body{padding:12px 14px;flex:1}
-.recipe .title{font-weight:650;font-size:16px;margin-bottom:4px}
+/* recipes: blog feed */
+.filter-chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:14px;scrollbar-width:none}
+.filter-chips button{flex:0 0 auto;border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:5px 12px;font-size:13px;font-weight:550;color:var(--muted);cursor:pointer}
+.filter-chips button.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.feed{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.post{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden;cursor:pointer;display:flex;flex-direction:column;box-shadow:var(--shadow);transition:transform .12s}
+.post:hover{transform:translateY(-2px)}
+.post .hero{position:relative;aspect-ratio:16/10;background:var(--bg);overflow:hidden}
+.post .hero img{width:100%;height:100%;object-fit:cover;display:block}
+.post .hero .ph-art{width:100%;height:100%;display:grid;place-items:center;font-size:64px}
+.post .src{position:absolute;left:10px;top:10px;background:rgba(0,0,0,.6);color:#fff;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;max-width:70%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.post .need{position:absolute;right:10px;top:10px;font-size:12px;font-weight:650;padding:3px 10px;border-radius:999px;background:var(--warn-soft);color:var(--warn)}
+.post .need.ok{background:var(--accent);color:var(--accent-ink)}
+.post .body{padding:12px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}
+.post .title{font-weight:680;font-size:17px;line-height:1.25;letter-spacing:-.01em}
+.post .meta{font-size:12.5px;color:var(--muted)}
+.post .sum{font-size:13.5px;color:var(--muted);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0}
+.post.skeleton .hero{animation:pulse 1.2s ease-in-out infinite}
+.post.skeleton .bar{height:12px;border-radius:6px;background:var(--bg);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.5}}
+.recipe-hero{width:100%;max-height:260px;object-fit:cover;border-radius:10px;margin-bottom:12px;display:block}
+@media (max-width:760px){.feed{grid-template-columns:1fr}}
 .chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
 .chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;background:var(--accent-soft);color:var(--accent)}
 .chip.miss{background:var(--warn-soft);color:var(--warn)}
@@ -322,16 +338,20 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
 
   <!-- RECIPES -->
   <section class="view" id="view-recipes">
-    <div class="row" style="margin-bottom:12px">
+    <div class="row" style="margin-bottom:6px">
       <h2 style="margin:0">Recipes</h2><span class="spacer"></span>
-      <div class="seg" id="recipe-mode"><button data-mm="0" class="on">Make now</button><button data-mm="3">Need a few more</button></div>
+      <button class="btn small" id="recipe-link">+ Add from a link</button>
+      <button class="btn small ai-btn" id="recipe-ai">✦ New AI ideas</button>
     </div>
-    <div class="row" style="margin-bottom:14px">
-      <input type="search" id="recipe-q" placeholder="Search recipes (e.g. chicken, Italian)" style="flex:1">
-      <button class="btn ai-btn" id="recipe-ai">✦ AI ideas</button>
+    <p class="sub small" id="recipe-status" style="margin:0 0 12px"></p>
+    <div class="row" style="margin-bottom:10px">
+      <input type="search" id="recipe-q" placeholder="Search recipes, ingredients, cuisines…" style="flex:1;min-width:180px">
     </div>
-    <div id="recipe-ai-results"></div>
+    <div class="filter-chips" id="recipe-filter">
+      <button data-f="" class="on">All</button><button data-f="can">Can make now</button><button data-f="mealdb">Library</button><button data-f="web">Web</button><button data-f="link">My links</button><button data-f="ai">AI</button>
+    </div>
     <div id="recipe-list"></div>
+    <div style="text-align:center;margin:16px 0"><button class="btn" id="recipe-more" style="display:none">Show more</button></div>
   </section>
 
   <!-- SETTINGS -->
@@ -372,6 +392,15 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
             </div>
           </div>
         </div>
+      </div>
+
+      <div class="card" id="recipes-card">
+        <h3>Recipes</h3>
+        <p class="small muted" style="margin-top:0">The Recipes page fills itself from the free recipe library, your saved links, web search and AI, sorted by what you can make with what you have.</p>
+        <div class="field"><label>Keep it fresh</label><label class="check small"><input type="checkbox" id="rc-auto"> Look for new recipes when the pantry changes (at most every couple of hours)</label></div>
+        <div class="field"><label>AI recipes per refresh</label><div class="row" style="gap:6px"><input type="number" id="rc-ai" min="0" max="10" style="width:80px"><span class="muted tiny">0 = only when you ask</span></div></div>
+        <div class="field"><label>Web search</label><div><div class="row" style="gap:6px;flex-wrap:nowrap"><input type="password" id="rc-key" autocomplete="off" style="flex:1"><button class="btn small" id="rc-key-clear" style="display:none">Remove</button></div>
+          <div class="tiny muted" style="margin-top:4px">Optional. A free <a href="https://spoonacular.com/food-api/console#Dashboard" target="_blank" rel="noopener">Spoonacular API key</a> finds recipes from sites across the web that use what you have, with links to the originals. The free plan's daily limit is plenty for a household.</div></div></div>
       </div>
 
       <div class="card">
@@ -702,6 +731,7 @@ async function productModal(pid){
       <div class="field"><label>Brand</label><input type="text" id="pm-brand" value="${esc(p.brand||'')}"></div>
       <div class="field"><label>Size</label><input type="text" id="pm-size" value="${esc(p.size_text||'')}"></div>
       <div class="field"><label>Category</label><select id="pm-cat">${catOptions(p.category)}</select></div>
+      <div class="field"><label>Counts as ingredient</label><div><input type="text" id="pm-ing" value="${esc(p.ingredient_name||'')}" placeholder="${esc(p.name.toLowerCase())}"><div class="tiny muted" style="margin-top:3px">What a recipe would call it, e.g. “flour tortillas”. Recipes match against this.</div></div></div>
       <div class="field"><label>Usually kept in</label><select id="pm-loc">${locOptions(p.default_location)}</select></div>
       <div class="field"><label>Once opened, keep in</label><select id="pm-oloc">${locOptions(p.effective_opened_location)}</select></div>
       <div class="field"><label>Barcode</label><input type="text" id="pm-bc" value="${esc(p.barcode||'')}" inputmode="numeric"></div>
@@ -716,7 +746,7 @@ async function productModal(pid){
   $('#pm-save').onclick=()=>safe(async()=>{
     const num=id=>{const v=$(id).value.trim(); return v===''?null:+v;};
     const f={name:$('#pm-name').value,brand:$('#pm-brand').value||null,size_text:$('#pm-size').value||null,category:$('#pm-cat').value,
-      default_location:$('#pm-loc').value,barcode:$('#pm-bc').value||null};
+      default_location:$('#pm-loc').value,barcode:$('#pm-bc').value||null,ingredient_name:$('#pm-ing').value.trim().toLowerCase()||null};
     if($('#pm-oloc').value!==p.effective_opened_location) f.opened_location=$('#pm-oloc').value;
     const shelf={shelf_pantry_days:num('#pm-pantry'),shelf_fridge_days:num('#pm-fridge'),shelf_freezer_days:num('#pm-freezer'),opened_days:num('#pm-opened')};
     if(['pantry','fridge','freezer'].some(l=>shelf['shelf_'+l+'_days']!==p['shelf_'+l+'_days'])||shelf.opened_days!==p.opened_days) Object.assign(f,shelf);
@@ -951,64 +981,126 @@ $('#receipt-new').onclick=async()=>{
   });
 };
 
-/* ---------- recipes ---------- */
-let recipeMM=0;
-$$('#recipe-mode button').forEach(b=>b.onclick=()=>{ recipeMM=+b.dataset.mm; $$('#recipe-mode button').forEach(x=>x.classList.toggle('on',x===b)); safe(renderRecipes); });
-let rq; $('#recipe-q').oninput=()=>{ clearTimeout(rq); rq=setTimeout(()=>safe(renderRecipes),250); };
-function recipeCard(r,i){
-  const miss=r.missing.map(m=>`<span class="chip miss">+ ${esc(m.name)}</span>`).join('');
+/* ---------- recipes: a blog-style feed from every source ---------- */
+const SRC_LABEL={mealdb:'Library',web:'Web',link:'Your link',ai:'AI idea'};
+const FOOD_ART=['🍲','🥘','🍝','🥗','🍛','🌮','🍳','🥪','🍜','🥙','🍗','🥧'];
+let recipeFilter='', recipeOffset=0, recipeTotal=0, RECIPES=[], feedWatching=null;
+function hashOf(s){ let h=0; for(const c of String(s)) h=(h*31+c.charCodeAt(0))|0; return Math.abs(h); }
+function recipeArt(r){ const h=hashOf(r.title); return `<div class="ph-art" style="background:linear-gradient(135deg,hsl(${h%360} 45% 82%),hsl(${(h+50)%360} 50% 70%))">${FOOD_ART[h%FOOD_ART.length]}</div>`; }
+function recipeImg(r,cls=''){
+  if(!r.image) return '';
+  const src=r.source==='mealdb'?r.image+'/medium':r.image;
+  return `<img class="${cls}" src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="if(this.dataset.f){this.remove()}else{this.dataset.f=1;this.src='${esc(r.image)}'}">`;
+}
+function srcLabel(r){ return r.source==='web'||r.source==='link'?(r.site||SRC_LABEL[r.source]):SRC_LABEL[r.source]; }
+function needLabel(r){ const n=r.missing.length; return n?`<span class="need">Need ${n}</span>`:'<span class="need ok">✓ Have everything</span>'; }
+function postCard(r,i){
+  const meta=[r.time_minutes?`${r.time_minutes} min`:null,r.servings?`serves ${r.servings}`:null,r.category,r.area].filter(Boolean).map(esc).join(' · ');
+  const miss=r.missing.slice(0,4).map(m=>`<span class="chip miss">+ ${esc(m.name)}</span>`).join('')+(r.missing.length>4?`<span class="chip miss">+${r.missing.length-4} more</span>`:'');
   const soon=r.uses_soon.map(s=>`<span class="chip soon">uses ${esc(s)}</span>`).join('');
-  return `<div class="card recipe" data-ri="${i}">${r.thumb?`<img src="${esc(r.thumb)}/medium" alt="" loading="lazy" onerror="this.src='${esc(r.thumb)}'">`:''}
-    <div class="body"><div class="title">${esc(r.title)}</div><div class="tiny muted">${esc([r.category,r.area,r.time_minutes?r.time_minutes+' min':null].filter(Boolean).join(' · '))}${r.source==='ai'?' <span class="pill ai">AI</span>':''}</div>
-    ${r.summary?`<p class="small" style="margin:6px 0 0">${esc(r.summary)}</p>`:''}
-    <div class="chips">${r.missing.length?miss:'<span class="chip">✓ you have everything</span>'}${soon}</div></div></div>`;
+  return `<article class="post" data-ri="${i}">
+    <div class="hero">${recipeImg(r)||recipeArt(r)}<span class="src">${esc(srcLabel(r))}</span>${needLabel(r)}</div>
+    <div class="body"><div class="title">${esc(r.title)}</div>${meta?`<div class="meta">${meta}</div>`:''}
+      ${r.summary?`<p class="sum">${esc(r.summary)}</p>`:''}
+      ${miss||soon?`<div class="chips">${miss}${soon}</div>`:''}</div></article>`;
 }
-let RECIPES=[], AI_RECIPES=[];
+function skeletons(n){ return Array.from({length:n},()=>`<article class="post skeleton"><div class="hero"></div><div class="body"><div class="bar" style="width:70%"></div><div class="bar" style="width:45%"></div></div></article>`).join(''); }
+function feedQuery(offset){
+  const p=new URLSearchParams({q:$('#recipe-q').value.trim(),offset,limit:24});
+  if(recipeFilter==='can') p.set('can_make','1'); else if(recipeFilter) p.set('source',recipeFilter);
+  return '/api/recipes?'+p;
+}
+function recipeStatus(d){
+  const c=d.counts||{}, total=Object.values(c).reduce((a,b)=>a+b,0);
+  const parts=[`${total} recipes`];
+  if(c.web) parts.push(`${c.web} from the web`); if(c.link) parts.push(`${c.link} from your links`); if(c.ai) parts.push(`${c.ai} AI ideas`);
+  let st=parts.join(' · ');
+  if(d.refreshing) st=`<span class="spin" style="display:inline-block;width:10px;height:10px;vertical-align:-1px"></span> Finding new recipes for what you have… · `+st;
+  else st+=` · <a href="#" id="recipe-refresh">Find new recipes</a>`;
+  if(!d.web_enabled) st+=` · <a href="#settings" id="recipe-webtip">Add web search</a>`;
+  setTimeout(()=>{ const t=$('#recipe-webtip'); if(t) t.onclick=e=>{ e.preventDefault(); go('settings'); setTimeout(()=>$('#recipes-card').scrollIntoView({behavior:'smooth'}),300); }; });
+  $('#recipe-status').innerHTML=st;
+  const rf=$('#recipe-refresh'); if(rf) rf.onclick=e=>{ e.preventDefault(); safe(async()=>{ const {job}=await api('/api/recipes/refresh',{json:{}}); watchFeed(job); renderRecipes(); }); };
+}
+function watchFeed(job){
+  if(!job||feedWatching===job) return;
+  feedWatching=job;
+  pollJob(job,'',{quiet:true}).then(r=>{
+    const n=(r.web||0)+(r.ai||0)+(r.mealdb||0);
+    if(view==='recipes'){ renderRecipes(); if(n) toast(`${n} new recipe${n!==1?'s':''} in your feed.`); }
+    if(r.warnings&&r.warnings.length) console.warn('Recipe refresh:',r.warnings);
+  }).catch(e=>console.warn(e)).finally(()=>{ feedWatching=null; });
+}
 async function renderRecipes(){
-  const q=$('#recipe-q').value.trim();
-  const mm=recipeMM===0?0:3;
-  const d=await api(`/api/recipes?max_missing=${mm}&q=${encodeURIComponent(q)}`);
-  $('#recipe-ai').style.display=d.ai_enabled?'':'none';
-  RECIPES=recipeMM===0?d.recipes:d.recipes.filter(r=>r.missing.length>0);
-  let html='';
-  if(!d.library_size) html=`<div class="card empty"><p style="color:var(--ink);margin-top:0">Download the free recipe library (TheMealDB, about 300 recipes) to see what you can make.</p><button class="btn primary" id="recipe-dl">Download recipes</button></div>`;
-  else if(!RECIPES.length) html=`<div class="card empty">${recipeMM===0?'Nothing in the library can be made with exactly what you have. Try “Need a few more”.':'No matches. Add more food, or try AI ideas.'}</div>`;
-  else html=`<div class="recipes">${RECIPES.map((r,i)=>recipeCard(r,i)).join('')}</div><p class="tiny muted">From TheMealDB · ${d.library_size} recipes · <a href="#" id="recipe-dl2">refresh library</a></p>`;
+  $('#recipe-ai').style.display=ME.ai_enabled?'':'none';
+  $$('#recipe-filter button').forEach(b=>b.classList.toggle('on',b.dataset.f===recipeFilter));
+  const d=await api(feedQuery(0));
+  RECIPES=d.recipes; recipeOffset=d.recipes.length; recipeTotal=d.total;
+  recipeStatus(d); watchFeed(d.refreshing);
+  let html;
+  if(!d.in_stock) html=`<div class="card empty"><p style="color:var(--ink);margin-top:0">Add some food and recipes you can make will show up here.</p><button class="btn primary" onclick="go('scan')">Scan something</button></div>`;
+  else if(!RECIPES.length&&d.refreshing) html=`<div class="feed">${skeletons(6)}</div>`;
+  else if(!RECIPES.length) html=`<div class="card empty">${$('#recipe-q').value.trim()?'No recipes match that search.':recipeFilter==='can'?'Nothing can be made with exactly what you have yet. Try <b>All</b> to see recipes that need a few things.':'Nothing here yet.'}</div>`;
+  else html=`<div class="feed">${RECIPES.map(postCard).join('')}${d.refreshing?skeletons(2):''}</div>`;
   $('#recipe-list').innerHTML=html;
-  $$('#recipe-list [data-ri]').forEach(el=>el.onclick=()=>recipeModal(RECIPES[+el.dataset.ri]));
-  const dl=async e=>{ e&&e.preventDefault(); await safe(async()=>{ const {job}=await api('/api/recipes/download',{json:{}}); const r=await pollJob(job,'Downloading recipes…'); toast(`${r.recipes} recipes downloaded.`); renderRecipes(); }); };
-  $('#recipe-dl')&&($('#recipe-dl').onclick=dl); $('#recipe-dl2')&&($('#recipe-dl2').onclick=dl);
-  drawAIRecipes();
+  bindPosts(); $('#recipe-more').style.display=recipeOffset<recipeTotal?'':'none';
 }
-function drawAIRecipes(){
-  $('#recipe-ai-results').innerHTML=AI_RECIPES.length?`<h3>AI ideas</h3><div class="recipes" style="margin-bottom:20px">${AI_RECIPES.map((r,i)=>recipeCard(r,'a'+i)).join('')}</div><h3>From the library</h3>`:'';
-  $$('#recipe-ai-results [data-ri]').forEach(el=>el.onclick=()=>recipeModal(AI_RECIPES[+el.dataset.ri.slice(1)]));
-}
-function recipeModal(r){
-  const haveSet=new Set(r.have.map(h=>h.name));
+function bindPosts(){ $$('#recipe-list .post[data-ri]').forEach(el=>el.onclick=()=>recipeModal(RECIPES[+el.dataset.ri].id)); }
+$('#recipe-more').onclick=()=>safe(async()=>{
+  const d=await api(feedQuery(recipeOffset));
+  const start=RECIPES.length; RECIPES=RECIPES.concat(d.recipes); recipeOffset+=d.recipes.length;
+  $('#recipe-list .feed').insertAdjacentHTML('beforeend',d.recipes.map((r,i)=>postCard(r,start+i)).join(''));
+  bindPosts(); $('#recipe-more').style.display=recipeOffset<d.total?'':'none';
+});
+$$('#recipe-filter button').forEach(b=>b.onclick=()=>{ recipeFilter=b.dataset.f; safe(renderRecipes); });
+let rq; $('#recipe-q').oninput=()=>{ clearTimeout(rq); rq=setTimeout(()=>safe(renderRecipes),250); };
+
+async function recipeModal(id){
+  const {recipe:r}=await api('/api/recipes/'+id);
+  const haveNames=new Set(r.have.map(h=>h.name));
+  const link=r.url?`<a class="btn small" href="${esc(r.url)}" target="_blank" rel="noopener">Read on ${esc(r.site||'the original site')} ↗</a>`
+    :r.search_url?`<a class="btn small" href="${esc(r.search_url)}" target="_blank" rel="noopener">Find it on the web ↗</a>`:'';
+  const meta=[SRC_LABEL[r.source],r.time_minutes?`${r.time_minutes} min`:null,r.servings?`serves ${r.servings}`:null,r.category,r.area].filter(Boolean).map(esc).join(' · ');
   openModal(`
-    <div class="modal-head"><h2>${esc(r.title)}</h2><button class="x" data-close>×</button></div>
+    <div class="modal-head"><h2>${esc(r.title)}<div class="tiny muted" style="font-weight:400">${meta}</div></h2><button class="x" data-close>×</button></div>
     <div class="modal-body">
-      ${r.thumb?`<img src="${esc(r.thumb)}" alt="" style="width:100%;max-height:240px;object-fit:cover;border-radius:10px;margin-bottom:10px">`:''}
+      ${r.image?recipeImg({...r,source:'x'},'recipe-hero'):''}
+      <div class="row" style="margin-bottom:10px">${needLabel(r).replace('class="need','class="pill need-pill').replace('need ok','ok')}${r.uses_soon.length?`<span class="pill neg">uses ${esc(r.uses_soon.join(', '))}</span>`:''}<span class="spacer"></span>${link}</div>
       ${r.summary?`<p>${esc(r.summary)}</p>`:''}
       <h3>Ingredients</h3>
-      <ul class="ing-list">${r.ingredients.map(i=>{ const h=r.have.find(x=>x.name===i.name); return `<li class="${haveSet.has(i.name)?'':'miss'}">${esc(i.amount)} ${esc(i.name)}${h&&h.product?` <span class="tiny muted">(${esc(h.product)})</span>`:''}${haveSet.has(i.name)?'':' <span class="tiny">· need</span>'}</li>`; }).join('')}</ul>
-      <h3>Method</h3>
-      ${r.steps?`<ol class="steps">${r.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>`:`<div class="instructions small">${esc(r.instructions||'')}</div>`}
-      ${r.url?`<p><a href="${esc(r.url)}" target="_blank" rel="noopener">Original recipe ↗</a></p>`:''}
+      <ul class="ing-list">${r.ingredients.map(i=>{ const h=r.have.find(x=>x.name===i.name); const have=haveNames.has(i.name);
+        return `<li class="${have?'':'miss'}">${esc(i.amount)} ${esc(i.name)}${h&&h.product?` <span class="tiny muted">(you have ${esc(h.product)})</span>`:''}${have?'':' <span class="tiny">· need</span>'}</li>`; }).join('')}</ul>
+      ${r.steps&&r.steps.length?`<h3>Method</h3><ol class="steps">${r.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>`:r.instructions?`<h3>Method</h3><div class="instructions small">${esc(r.instructions)}</div>`:r.url?`<p class="small muted">The method is on the original page.</p>`:''}
     </div>
-    <div class="modal-foot">${r.missing.length?`<button class="btn" id="rm-copy">Copy shopping list</button>`:''}<span class="spacer"></span><button class="btn" data-close>Close</button></div>`,{wide:true});
-  const cp=$('#rm-copy'); if(cp) cp.onclick=()=>{ navigator.clipboard?.writeText(r.missing.map(m=>'- '+m.name).join('\n')).then(()=>toast('Copied.')).catch(()=>toast('Couldn’t copy.')); };
+    <div class="modal-foot">${r.missing.length?`<button class="btn" id="rm-copy">Copy shopping list</button>`:''}<span class="spacer"></span>
+      <button class="btn" id="rm-hide">Hide</button>${r.source==='ai'||r.source==='link'?'<button class="btn danger" id="rm-del">Delete</button>':''}<button class="btn" data-close>Close</button></div>`,{wide:true});
+  const cp=$('#rm-copy'); if(cp) cp.onclick=()=>{ navigator.clipboard?.writeText(r.missing.map(m=>'- '+(m.amount?m.amount+' ':'')+m.name).join('\n')).then(()=>toast('Copied.')).catch(()=>toast('Couldn’t copy.')); };
+  $('#rm-hide').onclick=()=>safe(async()=>{ await api(`/api/recipes/${id}/hide`,{json:{}}); closeModal(); renderRecipes();
+    toast('Hidden from your feed.',[['Undo',()=>safe(async()=>{ await api(`/api/recipes/${id}/hide`,{json:{unhide:true}}); renderRecipes(); })]]); });
+  const del=$('#rm-del'); if(del) del.onclick=()=>safe(async()=>{ await api('/api/recipes/'+id,{method:'DELETE'}); closeModal(); toast('Deleted.'); renderRecipes(); });
 }
+$('#recipe-link').onclick=()=>{
+  openModal(`<div class="modal-head"><h2>Add a recipe from a link</h2><button class="x" data-close>×</button></div>
+    <div class="modal-body"><p class="small muted" style="margin-top:0">Paste the page of any recipe (a blog, AllRecipes, NYT Cooking, BBC Good Food…). Pantry reads its ingredients and keeps the link to the original.</p>
+      <input type="url" id="rl-url" placeholder="https://…"><div id="rl-msg" class="small neg" style="margin-top:8px"></div></div>
+    <div class="modal-foot"><button class="btn primary" id="rl-go">Add recipe</button><span class="spacer"></span><button class="btn" data-close>Cancel</button></div>`);
+  setTimeout(()=>$('#rl-url').focus(),60);
+  const go_=async()=>{ const b=$('#rl-go'); b.disabled=true; b.textContent='Reading the page…'; $('#rl-msg').textContent='';
+    try{ const {recipe}=await api('/api/recipes/import',{json:{url:$('#rl-url').value}}); closeModal(); toast(`Added “${recipe.title}”.`); recipeFilter=''; await renderRecipes(); recipeModal(recipe.id); }
+    catch(e){ $('#rl-msg').textContent=e.message; b.disabled=false; b.textContent='Add recipe'; } };
+  $('#rl-go').onclick=go_; $('#rl-url').addEventListener('keydown',e=>{ if(e.key==='Enter') go_(); });
+};
 $('#recipe-ai').onclick=()=>{
-  const m=openModal(`<div class="modal-head"><h2>AI recipe ideas</h2><button class="x" data-close>×</button></div>
-    <div class="modal-body"><p class="small muted" style="margin-top:0">The AI sees everything in stock and favours what expires soon.</p>
+  openModal(`<div class="modal-head"><h2>New AI recipe ideas</h2><button class="x" data-close>×</button></div>
+    <div class="modal-body"><p class="small muted" style="margin-top:0">The AI sees everything in stock and favours what expires soon. New ideas join your feed.</p>
       <div class="field"><label>Anything specific?</label><input type="text" id="ra-req" placeholder="e.g. quick weeknight dinner, vegetarian, uses the spinach"></div>
       <div class="field"><label>Missing ingredients OK</label><select id="ra-mm"><option value="0">None</option><option value="2">Up to 2</option><option value="3" selected>Up to 3</option><option value="5">Up to 5</option></select></div></div>
     <div class="modal-foot"><button class="btn primary" id="ra-go">Get ideas</button><span class="spacer"></span><button class="btn" data-close>Cancel</button></div>`);
   $('#ra-go').onclick=()=>safe(async()=>{
     const {job}=await api('/api/recipes/ai',{json:{request:$('#ra-req').value,max_missing:+$('#ra-mm').value}}); closeModal();
-    const r=await pollJob(job,'The AI is thinking up recipes…'); AI_RECIPES=r.recipes; if(view==='recipes') drawAIRecipes(); toast(`${r.recipes.length} ideas ready.`,view==='recipes'?[]:[['Show',()=>go('recipes')]]);
+    const r=await pollJob(job,'The AI is writing recipes…');
+    toast(`${r.count} new idea${r.count!==1?'s':''} added to your feed.`,view==='recipes'?[]:[['Show',()=>go('recipes')]]);
+    if(view==='recipes'){ recipeFilter='ai'; renderRecipes(); }
   });
 };
 
@@ -1086,6 +1178,9 @@ async function renderSettings(){
   $('#ai-timeout').value=a.ai_timeout; $('#ai-autoshelf').checked=a.ai_auto_shelf==='1'; $('#ai-think').checked=a.ai_think==='1';
   $('#ai-key').value=''; $('#ai-key').placeholder=a.ai_api_key_set==='1'?'saved (type to replace)':'sk-ant-…';
   aiFieldsVisibility(); loadModels(true); renderShelfStatus();
+  $('#rc-auto').checked=s.recipes_auto==='1'; $('#rc-ai').value=s.recipes_ai_count;
+  $('#rc-key').value=''; $('#rc-key').placeholder=s.spoonacular_key_set==='1'?'saved (type to replace)':'paste your key';
+  $('#rc-key-clear').style.display=s.spoonacular_key_set==='1'?'':'none';
   const {users}=await api('/api/users');
   $('#users-list').innerHTML=users.map(u=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(u.name)}</b>${u.is_admin?'<span class="pill">admin</span>':''}${u.id===ME.user.id?'<span class="pill ok">you</span>':''}<span class="spacer"></span>${ME.user.is_admin&&u.id!==ME.user.id?`<button class="btn small" data-reset="${u.id}">Reset password</button><button class="btn small danger" data-deluser="${u.id}">Remove</button>`:''}</div>`).join('');
   $('#users-add-row').style.display=ME.user.is_admin?'':'none';
@@ -1099,6 +1194,11 @@ async function renderSettings(){
 }
 async function saveGeneral(extra={}){ await api('/api/settings',{method:'PUT',json:{warn_days:$('#set-warn').value,notify_hour:$('#set-hour').value,notify_weekly_day:$('#set-week').value,...extra}}); }
 ['#set-hour','#set-warn','#set-week'].forEach(id=>$(id).onchange=()=>safe(async()=>{ await saveGeneral(); toast('Saved.'); }));
+$('#rc-auto').onchange=()=>safe(async()=>{ await api('/api/settings',{method:'PUT',json:{recipes_auto:$('#rc-auto').checked?1:0}}); toast('Saved.'); });
+$('#rc-ai').onchange=()=>safe(async()=>{ await api('/api/settings',{method:'PUT',json:{recipes_ai_count:Math.max(0,Math.min(10,+$('#rc-ai').value||0))}}); toast('Saved.'); });
+$('#rc-key').onchange=()=>safe(async()=>{ const k=$('#rc-key').value.trim(); if(!k) return;
+  await api('/api/settings',{method:'PUT',json:{spoonacular_key:k}}); toast('Saved. Web recipes will appear on the Recipes page.'); renderSettings(); });
+$('#rc-key-clear').onclick=()=>safe(async()=>{ await api('/api/settings',{method:'PUT',json:{spoonacular_clear:true}}); toast('Removed.'); renderSettings(); });
 $('#staples-save').onclick=()=>safe(async()=>{ await saveGeneral({staples:$('#set-staples').value}); toast('Saved.'); });
 $('#user-add').onclick=()=>safe(async()=>{ await api('/api/users',{json:{name:$('#new-user').value,password:$('#new-pass').value,is_admin:$('#new-admin').checked}}); $('#new-user').value=$('#new-pass').value=''; toast('Added. They can sign in now.'); renderSettings(); });
 $('#pw-save').onclick=()=>safe(async()=>{ await api('/api/users/password',{json:{current:$('#pw-cur').value,password:$('#pw-new').value}}); $('#pw-cur').value=$('#pw-new').value=''; toast('Password changed.'); });

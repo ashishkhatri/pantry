@@ -124,6 +124,38 @@ MIGRATIONS = {
     -- Where a product goes once opened (e.g. sauces: pantry -> fridge). NULL = the category's default.
     ALTER TABLE products ADD COLUMN opened_location TEXT;
     """,
+    3: """
+    -- Every recipe the feed can show, whatever its source:
+    --   mealdb (the free TheMealDB library), web (Spoonacular search), link (imported from a URL), ai.
+    CREATE TABLE recipes (
+        id            INTEGER PRIMARY KEY,
+        source        TEXT NOT NULL,
+        ext_id        TEXT,                                 -- id at the source (TheMealDB / Spoonacular)
+        title         TEXT NOT NULL,
+        summary       TEXT,
+        image         TEXT,
+        url           TEXT,                                 -- the original page, when there is one
+        site          TEXT,                                 -- e.g. "allrecipes.com"
+        category      TEXT,
+        area          TEXT,
+        time_minutes  INTEGER,
+        servings      INTEGER,
+        ingredients   TEXT NOT NULL,                        -- JSON [{name, amount}]
+        instructions  TEXT,                                 -- free text
+        steps         TEXT,                                 -- JSON [step, ...]
+        hidden        INTEGER NOT NULL DEFAULT 0,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX ux_recipes_ext ON recipes(source, ext_id) WHERE ext_id IS NOT NULL;
+    CREATE INDEX ix_recipes_source ON recipes(source, created_at);
+    INSERT INTO recipes(source, ext_id, title, image, url, category, area, ingredients, instructions, created_at)
+        SELECT 'mealdb', id, name, thumb, source_url, category, area, ingredients, instructions, fetched_at FROM mealdb;
+    """,
+    4: """
+    -- What a recipe would call this product ("Kirkland Butter Tortillas" -> "flour tortillas"). From the AI
+    -- or you; recipes match against it instead of the product name.
+    ALTER TABLE products ADD COLUMN ingredient_name TEXT;
+    """,
 }
 
 DEFAULT_SETTINGS: Dict[str, str] = {
@@ -133,6 +165,11 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "staples": "salt\npepper\nblack pepper\nwater\nice",
     "last_daily_run": "",
     "last_weekly_run": "",
+    "recipes_auto": "1",         # refresh the recipe feed in the background
+    "recipes_ai_count": "4",     # AI recipes written per refresh
+    "spoonacular_key": "",       # optional: web recipe search (free key at spoonacular.com/food-api)
+    "last_feed_refresh": "",
+    "feed_signature": "",
 }
 
 

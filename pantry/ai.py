@@ -406,8 +406,11 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
         "doesn't say shelf-stable, assume the refrigerated version, the safer choice, "
         "\"opened_location\": where it must be kept once opened, e.g. ketchup, sauces, jam, canned goods and "
         "shelf-stable milk go to \"fridge\" once opened, while rice, cereal and peanut butter stay in \"pantry\", "
+        "\"ingredient_name\": the plain ingredient a recipe would list this as, lowercase, no brand or size, "
+        "e.g. \"Kirkland Butter Tortillas 20ct\" -> \"flour tortillas\", \"Silk Unsweetened Almondmilk\" -> "
+        "\"almond milk\", \"Kerrygold Pure Irish Butter\" -> \"butter\", \"Hunt's Diced Tomatoes\" -> \"diced tomatoes\", "
         "\"note\": one short storage tip}")
-    d = ask_json(p, "shelf", SYSTEM, prompt, None, 600)
+    d = ask_json(p, "shelf", SYSTEM, prompt, None, 700)
     if not isinstance(d, dict):
         raise AIError("Unexpected answer for shelf life.")
     loc = d.get("best_location") if d.get("best_location") in dbm.LOCATIONS else None
@@ -418,6 +421,7 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
             "opened_days": _int_or_none(d.get("opened_days")),
             "default_location": loc,
             "opened_location": d.get("opened_location") if d.get("opened_location") in dbm.LOCATIONS else None,
+            "ingredient_name": (str(d.get("ingredient_name") or "").strip().lower()[:80] or None),
             "note": str(d.get("note") or "")[:200]}
 
 

@@ -547,16 +547,46 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
 
     # ---------------- recipes ----------------
 
-    @app.get("/api/recipes")
-    def recipes_list():
-        c = con()
-        mm = max(0, min(10, request.args.get("max_missing", 3, type=int)))
-        return jsonify(recipes=recipes.from_mealdb(c, mm, 80, request.args.get("q", "")),
-                       library_size=recipes.mealdb_count(c), ai_enabled=ai.enabled(c))
+    def _refresh_job(c, force=False):
+        """The running feed refresh, or a new one if the feed is stale (or forced)."""
+        row = c.execute("SELECT id FROM jobs WHERE kind = 'feed_refresh' AND status IN ('queued', 'running') "
+                        "LIMIT 1").fetchone()
+        if row:
+            return row[0]
+        if force or recipes.mealdb_count(c) == 0 or recipes.needs_refresh(c):
+            return runner.submit(c, "feed_refresh", {}, uid())
+        return None
 
-    @app.post("/api/recipes/download")
+    @app.get("/api/recipes")
+    def recipes_feed():
+        c = con()
+        a = request.args
+        data = recipes.feed(c, a.get("q", ""), a.get("source", ""), a.get("can_make") == "1",
+                            a.get("offset", 0, type=int), min(60, a.get("limit", 24, type=int)))
+        for r in data["recipes"]:
+            if r["source"] == "ai":
+                r["search_url"] = recipes.web_search_url(r["title"])
+        return jsonify(**data, counts=recipes.counts(c), in_stock=len(inventory.pantry_names(c)),
+                       ai_enabled=ai.enabled(c), web_enabled=bool(dbm.get_setting(c, "spoonacular_key")),
+                       refreshing=_refresh_job(c))
+
+    @app.get("/api/recipes/<int:rid>")
+    def recipe_get(rid):
+        c = con()
+        r = recipes.get(c, rid)
+        if not r:
+            raise ApiError("Recipe not found.", 404)
+        if r["source"] == "ai":
+            r["search_url"] = recipes.web_search_url(r["title"])
+        return jsonify(recipe=r)
+
+    @app.post("/api/recipes/refresh")
+    def recipes_refresh():
+        return jsonify(job=_refresh_job(con(), force=True))
+
+    @app.post("/api/recipes/download")       # older pages call this; same as a refresh
     def recipes_download():
-        return jsonify(job=runner.submit(con(), "mealdb", {}, uid()))
+        return jsonify(job=_refresh_job(con(), force=True))
 
     @app.post("/api/recipes/ai")
     def recipes_ai():
@@ -567,14 +597,36 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         return jsonify(job=runner.submit(c, "recipes", {"max_missing": int(b.get("max_missing", 3)),
                                                         "request": str(b.get("request") or "")[:300]}, uid()))
 
+    @app.post("/api/recipes/import")
+    def recipes_import():
+        c = con()
+        rid = recipes.import_url(c, str(body().get("url") or ""))
+        return jsonify(recipe=recipes.get(c, rid))
+
+    @app.post("/api/recipes/<int:rid>/hide")
+    def recipe_hide(rid):
+        c = con()
+        with c:
+            c.execute("UPDATE recipes SET hidden = ? WHERE id = ?", (0 if body().get("unhide") else 1, rid))
+        return jsonify(ok=True)
+
+    @app.delete("/api/recipes/<int:rid>")
+    def recipe_delete(rid):
+        c = con()
+        with c:
+            c.execute("DELETE FROM recipes WHERE id = ? AND source IN ('ai', 'link')", (rid,))
+        return jsonify(ok=True)
+
     # ---------------- settings ----------------
 
-    GENERAL = ("warn_days", "notify_hour", "notify_weekly_day", "staples")
+    GENERAL = ("warn_days", "notify_hour", "notify_weekly_day", "staples", "recipes_auto", "recipes_ai_count")
 
     @app.get("/api/settings")
     def settings_get():
         c = con()
-        return jsonify(settings={k: dbm.get_setting(c, k) for k in GENERAL}, ai=ai.get_settings(c))
+        st = {k: dbm.get_setting(c, k) for k in GENERAL}
+        st["spoonacular_key_set"] = "1" if dbm.get_setting(c, "spoonacular_key") else "0"
+        return jsonify(settings=st, ai=ai.get_settings(c))
 
     @app.put("/api/settings")
     def settings_put():
@@ -587,11 +639,17 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
                     if k != "staples":
                         if not v.isdigit():
                             raise ApiError(f"{k} must be a whole number.")
-                        lim = {"warn_days": 60, "notify_hour": 23, "notify_weekly_day": 6}[k]
+                        lim = {"warn_days": 60, "notify_hour": 23, "notify_weekly_day": 6, "recipes_auto": 1,
+                               "recipes_ai_count": 10}[k]
                         v = str(min(int(v), lim))
                     dbm.set_setting(c, k, v)
             if "warn_days" in b:
                 c.execute("UPDATE items SET notified_stage = 0 WHERE finished_on IS NULL AND notified_stage = 1")
+            if b.get("spoonacular_key"):
+                dbm.set_setting(c, "spoonacular_key", str(b["spoonacular_key"]).strip())
+                dbm.set_setting(c, "last_feed_refresh", "")      # search the web on the next visit
+            if b.get("spoonacular_clear"):
+                dbm.set_setting(c, "spoonacular_key", "")
             if isinstance(b.get("ai"), dict):
                 ai.save_settings(c, b["ai"])
         return jsonify(ok=True)
@@ -786,6 +844,8 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
         new_loc = res.get("default_location")
         if res.get("opened_location"):
             fields["opened_location"] = res["opened_location"]
+        if res.get("ingredient_name") and not p["ingredient_name"]:
+            fields["ingredient_name"] = res["ingredient_name"]
         with c:
             if new_loc in dbm.LOCATIONS and new_loc != p["default_location"]:
                 fields["default_location"] = new_loc
@@ -839,13 +899,49 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
     def mealdb(c, payload, **_):
         return recipes.fetch_mealdb(c)
 
+    def store_ai_recipes(c, rs):
+        ids = []
+        for r in rs:
+            rid = recipes.store(c, {**r, "source": "ai"})
+            if rid:
+                ids.append(rid)
+        recipes.prune_ai(c)
+        c.commit()
+        return ids
+
     def recipes_ai(c, payload, **_):
         pantry = inventory.pantry_names(c)
         if not pantry:
             raise InventoryError("Add some food first.")
         res = ai.suggest_recipes(c, pantry, recipes.staples(c), payload.get("max_missing", 3), 6,
                                  payload.get("request", ""))
-        return {"recipes": recipes.check_ai_recipes(c, res["recipes"])}
+        return {"ids": store_ai_recipes(c, res["recipes"]), "count": len(res["recipes"])}
+
+    def feed_refresh(c, payload, **_):
+        """Keep the recipe feed full: the library (first time), web recipes for what you have
+        (with a Spoonacular key), and a few new AI recipes. One source failing doesn't stop the rest."""
+        out, warnings = {"mealdb": 0, "web": 0, "ai": 0}, []
+        if recipes.mealdb_count(c) == 0:
+            try:
+                out["mealdb"] = recipes.fetch_mealdb(c)["recipes"]
+            except LookupError as e:
+                warnings.append(f"Recipe library: {e}")
+        pantry = inventory.pantry_names(c)
+        key = dbm.get_setting(c, "spoonacular_key")
+        if key and pantry:
+            try:
+                out["web"] = recipes.fetch_spoonacular(c, key, recipes.focus_ingredients(c))
+            except LookupError as e:
+                warnings.append(f"Web recipes: {e}")
+        n = int(dbm.get_setting(c, "recipes_ai_count") or 0)
+        if n and pantry and ai.enabled(c):
+            try:
+                res = ai.suggest_recipes(c, pantry, recipes.staples(c), 3, n, "")
+                out["ai"] = len(store_ai_recipes(c, res["recipes"]))
+            except ai.AIError as e:
+                warnings.append(f"AI recipes: {e}")
+        recipes.mark_refreshed(c)
+        return {**out, "warnings": warnings}
 
     runner.register("identify", identify)
     runner.register("receipt", receipt)
@@ -854,3 +950,4 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
     runner.register("shelf_all", shelf_all)
     runner.register("mealdb", mealdb)
     runner.register("recipes", recipes_ai)
+    runner.register("feed_refresh", feed_refresh)

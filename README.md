@@ -15,7 +15,7 @@ It's a small Python (Flask + SQLite) server with a web app you install on your p
 | **Photo of food** | Snap the counter after shopping. The AI lists what it sees, and you review it the same way. | Yes |
 | **Expiry dates** | Each item gets an estimated date from its category and where it's stored (see *Shelf life*). You can type the printed date instead. Opening an item or moving it to the freezer updates the date. | Optional |
 | **Reminders** | A push notification at a set time each day for items expiring within *N* days (default 3) or just past date. Each item is announced once per stage. A weekly digest lists everything still past date. | No |
-| **Recipes** | **Make now** shows recipes that need nothing you don't have. **Need a few more** allows up to 3 missing ingredients. These come from [TheMealDB](https://www.themealdb.com) (about 300 recipes, downloaded once). **AI ideas** writes recipes around what you have, starting with what expires soon. | Optional |
+| **Recipes** | A blog-style feed that fills itself from four sources: the free [TheMealDB](https://www.themealdb.com) library, recipe links you paste from any site, web search (optional free Spoonacular key), and AI ideas built around what expires soon. It's sorted by what you can make: everything on hand first, then fewest missing ingredients. | Optional |
 | **Household** | Everyone has their own sign-in and shares one pantry. History shows who added or used what. | No |
 | **Ran out recently** | On the home page, with a **Bought again** button. Works as a ready-made shopping list. | No |
 
@@ -189,13 +189,38 @@ With AI on, each **new** product is sent to the AI once.
 
 ## Recipes and matching
 
-Recipe ingredients are matched to what's in stock by name, with a little sense:
-- **Matches:** "chicken breast" matches *Boneless Skinless Chicken Breasts*, "minced beef" matches *Ground beef*, and "cheddar cheese" matches *Sharp Cheddar*.
-- **Doesn't match:** "butter" doesn't match *Peanut Butter*, and "milk" doesn't match *Coconut milk*.
-- **Staples:** things in Settings → Staples (salt, pepper, water by default) never count as missing.
-- **Ordering:** recipes that use items expiring soon come first.
+**The feed.** The Recipes page is one feed, sorted by how many ingredients you'd still need: *✓ Have everything* first, then *Need 1*, *Need 2*… Ties go to recipes that use things expiring soon. Filter by *Can make now*, *Library*, *Web*, *My links* or *AI*, or search. **Hide** removes a recipe from the feed (with Undo).
 
-The AI's own "you have this" claims are re-checked the same way.
+**Where recipes come from:**
+
+| Source | How |
+|---|---|
+| **Library** | TheMealDB's ~300 recipes, downloaded automatically the first time you open Recipes. |
+| **My links** | **+ Add from a link**: paste any recipe page (food blogs, AllRecipes, NYT Cooking, BBC Good Food…). Pantry reads the recipe data most recipe sites publish (schema.org) and keeps a link to the original. |
+| **Web** | With a free [Spoonacular](https://spoonacular.com/food-api) key in **Settings → Recipes**, Pantry searches recipes from across the web by what you have, starting with what expires soon. Each one links to its original site. |
+| **AI** | **✦ New AI ideas**, or automatically a few per refresh (Settings → Recipes). Each AI recipe has a *Find it on the web* link. |
+
+**Refreshing.** The feed refreshes itself in the background when your pantry has changed (3+ products, or some change and 2+ hours) or it's been 12 hours. It adds web recipes and a few AI ideas; older AI ideas are cleared out over time. **Find new recipes** on the Recipes page refreshes it now.
+
+**How ingredients are matched.** Recipe ingredients are matched to what's in stock by name.
+
+| Recipe says | Matches | Doesn't match |
+|---|---|---|
+| chicken breast | *Boneless Skinless Chicken Breasts* | |
+| minced beef | *Ground beef* | |
+| cheddar cheese | *Sharp Cheddar* | |
+| milk | *Whole Milk Vitamin D* | *Coconut milk* |
+| butter | | *Peanut Butter*, *Butter tortillas* |
+| chicken | | *Chicken broth* |
+| flour | | *Flour tortillas* |
+
+The rule behind the last two rows: a different food word after the match (tortillas, broth, paste, bread…) means it's another food. Pantry learns those words from every recipe it stores.
+
+**When a name is unclear,** each product has a **Counts as ingredient** name, which recipes match against instead of the product name.
+- **With AI:** it's filled in for you, e.g. "Kirkland Butter Tortillas 20ct" → *flour tortillas*, "Kerrygold Pure Irish" → *butter*.
+- **By hand:** set or correct it in **Product & shelf-life settings**.
+
+**Staples.** Things in Settings → Staples (salt, pepper and water by default) never count as missing, and that includes variants like "kosher salt" and "freshly ground black pepper", but not "bell pepper".
 
 ## Where your data lives
 

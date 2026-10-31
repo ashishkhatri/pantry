@@ -270,13 +270,17 @@ class RecipeTests(Base):
                ("cheddar cheese", "Cheddar"), ("minced beef", "Ground beef 80/20"), ("eggs", "Large Eggs 12 ct"),
                ("aubergine", "Eggplant"), ("chicken stock", "Chicken Broth")]
         no = [("butter", "Peanut Butter"), ("milk", "Coconut milk"), ("cream", "Sour cream"),
-              ("garlic", "Garlic powder"), ("potatoes", "Sweet potatoes"), ("chicken", "Chicken broth")]
+              ("garlic", "Garlic powder"), ("potatoes", "Sweet potatoes"), ("chicken", "Chicken broth"),
+              ("butter", "Butter tortillas"), ("flour", "Flour tortillas"), ("tomato", "Tomato paste"),
+              ("garlic", "Garlic bread"), ("cheese", "Cheese crackers"), ("goat cheese", "Feta cheese"),
+              ("cream cheese", "Cheddar cheese")]
+        yes += [("cheese", "Cheddar cheese"), ("cheddar cheese", "Sharp Cheddar"), ("parmesan cheese", "Parmesan"), ("milk", "Whole Milk Vitamin D"), ("chicken", "Chicken thighs"), ("tortillas", "Butter tortillas")]
         for a, b in yes:
             self.assertTrue(recipes.matches(a, b), (a, b))
         for a, b in no:
             self.assertFalse(recipes.matches(a, b), (a, b))
 
-    def test_mealdb_download_and_rank(self):
+    def _seed_library(self):
         def meal(i, name, ings):
             m = {"idMeal": str(i), "strMeal": name, "strCategory": "Test", "strArea": "X", "strMealThumb": None,
                  "strInstructions": "Cook."}
@@ -287,21 +291,120 @@ class RecipeTests(Base):
 
         meals = {"o": [meal(1, "Omelette", ["Eggs", "Butter", "Salt"])],
                  "c": [meal(2, "Chicken Rice", ["Chicken breast", "Rice", "Onion", "Garlic"]),
-                       meal(3, "Cake", ["Flour", "Sugar", "Eggs", "Butter", "Milk", "Vanilla"])]}
-        fetch = lambda url: {"meals": meals.get(url[-1])}
+                       meal(3, "Cake", ["Flour", "Sugar", "Eggs", "Butter", "Milk", "Vanilla"]),
+                       meal(4, "Clam chowder", ["Clams", "Bacon", "Potatoes", "Cream"])]}
         con = self.con()
-        self.assertEqual(recipes.fetch_mealdb(con, fetch)["recipes"], 3)
+        self.assertEqual(recipes.fetch_mealdb(con, lambda url: {"meals": meals.get(url[-1])})["recipes"], 4)
+        dbm.set_setting(con, "last_feed_refresh", datetime.now().isoformat())
+        dbm.set_setting(con, "feed_signature", recipes.pantry_signature(con))
+        con.commit()
         con.close()
+
+    def test_feed_sorted_by_missing(self):
+        self._seed_library()
         for n in ("Large eggs", "Unsalted butter", "Chicken breasts", "Jasmine rice"):
             self.post("/api/items", {"product": {"name": n}})
         self.post("/api/items", {"product": {"name": "Yellow onion"},
                                  "expires_on": (date.today() + timedelta(days=1)).isoformat()})
-        r = self.c.get("/api/recipes?max_missing=1").json["recipes"]
-        self.assertEqual([x["title"] for x in r], ["Omelette", "Chicken Rice"])
-        self.assertEqual([m["name"] for m in r[1]["missing"]], ["Garlic"])
-        self.assertEqual(r[1]["uses_soon"], ["Chicken breasts", "Yellow onion"])   # raw chicken keeps 2 days
-        r = self.c.get("/api/recipes?max_missing=4").json["recipes"]
-        self.assertIn("Cake", [x["title"] for x in r])
+        d = self.c.get("/api/recipes").json
+        titles = [x["title"] for x in d["recipes"]]
+        self.assertEqual(titles, ["Omelette", "Chicken Rice", "Cake"])       # 0, 1, 3 missing; chowder uses nothing
+        self.assertEqual([m["name"] for m in d["recipes"][1]["missing"]], ["Garlic"])
+        self.assertEqual(d["recipes"][1]["uses_soon"], ["Chicken breasts", "Yellow onion"])   # raw chicken keeps 2 days
+        self.assertEqual([x["title"] for x in self.c.get("/api/recipes?can_make=1").json["recipes"]], ["Omelette"])
+        self.assertEqual([x["title"] for x in self.c.get("/api/recipes?q=cake").json["recipes"]], ["Cake"])
+        # Hiding takes it out of the feed
+        rid = d["recipes"][2]["id"]
+        self.post(f"/api/recipes/{rid}/hide")
+        self.assertNotIn("Cake", [x["title"] for x in self.c.get("/api/recipes").json["recipes"]])
+
+    def test_ingredient_name_is_used_for_matching(self):
+        self._seed_library()
+        r = self.post("/api/items", {"product": {"name": "Kerrygold Pure Irish"}})      # name doesn't say butter
+        self.post("/api/items", {"product": {"name": "Large eggs"}})
+        self.assertEqual(self.c.get("/api/recipes?can_make=1").json["recipes"], [])
+        self.c.patch(f"/api/products/{r['product_id']}", json={"ingredient_name": "butter"}, headers=H)
+        d = self.c.get("/api/recipes?can_make=1").json["recipes"]
+        self.assertEqual([x["title"] for x in d], ["Omelette"])
+        self.assertIn("Kerrygold Pure Irish", [h.get("product") for h in d[0]["have"]])
+
+    def test_import_from_link(self):
+        page = """<html><head><script type="application/ld+json">
+        {"@context":"https://schema.org","@graph":[{"@type":"WebPage","name":"x"},
+         {"@type":["Recipe"],"name":"Garlic Butter Rice","image":[{"url":"https://img.example/rice.jpg"}],
+          "description":"Simple &amp; quick.","totalTime":"PT1H5M","recipeYield":["4 servings"],
+          "recipeIngredient":["2 cups jasmine rice, rinsed","3 tablespoons unsalted butter","4 cloves garlic, minced",
+                              "1 teaspoon kosher salt"],
+          "recipeInstructions":[{"@type":"HowToSection","itemListElement":[{"@type":"HowToStep","text":"Rinse the rice."},
+                                {"@type":"HowToStep","text":"Cook with <b>butter</b>."}]}]}]}
+        </script></head><body></body></html>"""
+        for n in ("Jasmine rice", "Unsalted butter"):
+            self.post("/api/items", {"product": {"name": n}})
+        con = self.con()
+        rid = recipes.import_url(con, "https://www.example.com/garlic-rice", lambda u: page)
+        r = recipes.get(con, rid)
+        con.close()
+        self.assertEqual((r["title"], r["site"], r["time_minutes"], r["servings"]), ("Garlic Butter Rice", "example.com", 65, 4))
+        self.assertEqual(r["image"], "https://img.example/rice.jpg")
+        self.assertEqual(r["summary"], "Simple & quick.")
+        self.assertEqual(r["steps"], ["Rinse the rice.", "Cook with butter."])
+        self.assertEqual([m["name"] for m in r["missing"]], ["4 cloves garlic, minced"])     # salt is a staple
+        with self.assertRaises(LookupError):
+            recipes.parse_recipe_page("<html>no recipe here</html>", "https://x.example")
+
+    def test_spoonacular(self):
+        self._seed_library()
+        self.post("/api/items", {"product": {"name": "Baby spinach"}})
+        self.post("/api/items", {"product": {"name": "Large eggs"}})
+        calls = []
+
+        def fetch(url):
+            calls.append(url)
+            if "findByIngredients" in url:
+                return [{"id": 77}]
+            return [{"id": 77, "title": "Spinach Frittata", "image": "https://img/77.jpg", "readyInMinutes": 25,
+                     "servings": 2, "sourceUrl": "https://www.someblog.com/frittata",
+                     "summary": "A <b>quick</b> frittata. More text.", "dishTypes": ["breakfast"], "cuisines": [],
+                     "extendedIngredients": [{"nameClean": "spinach", "original": "2 cups spinach"},
+                                             {"nameClean": "eggs", "original": "6 eggs"},
+                                             {"nameClean": "feta", "original": "1/4 cup feta"}],
+                     "analyzedInstructions": [{"steps": [{"step": "Whisk."}, {"step": "Bake."}]}]}]
+        con = self.con()
+        self.assertEqual(recipes.fetch_spoonacular(con, "KEY", recipes.focus_ingredients(con), fetch=fetch), 1)
+        con.close()
+        self.assertIn("ingredients=", calls[0])
+        self.assertIn("apiKey=KEY", calls[1])
+        d = self.c.get("/api/recipes?source=web").json["recipes"]
+        self.assertEqual((d[0]["title"], d[0]["site"], d[0]["summary"]), ("Spinach Frittata", "someblog.com", "A quick frittata."))
+        self.assertEqual([m["name"] for m in d[0]["missing"]], ["feta"])
+
+    def test_refresh_job_fills_feed(self):
+        self.post("/api/items", {"product": {"name": "Large eggs"}})
+        with mock.patch.object(recipes, "_get_json", side_effect=lambda url, timeout=20: {
+                "meals": [{"idMeal": "9", "strMeal": "Boiled eggs", "strIngredient1": "Eggs", "strMeasure1": "2"}]
+                if url.endswith("f=b") else None}):
+            d = self.c.get("/api/recipes").json
+            self.assertTrue(d["refreshing"])                    # empty library: refresh starts by itself
+            self.assertEqual(self.c.get("/api/recipes").json["refreshing"], d["refreshing"])   # not twice
+            self.run_jobs()
+        j = self.c.get(f"/api/jobs/{d['refreshing']}").json["job"]
+        self.assertEqual((j["status"], j["result"]["mealdb"]), ("done", 1))
+        d = self.c.get("/api/recipes").json
+        self.assertIsNone(d["refreshing"])                      # fresh now
+        self.assertEqual([x["title"] for x in d["recipes"]], ["Boiled eggs"])
+
+    def test_old_library_moves_to_recipes_table(self):
+        import sqlite3
+        path = os.path.join(self.dir, "old.sqlite")
+        con = sqlite3.connect(path)
+        con.executescript(dbm.MIGRATIONS[1] + dbm.MIGRATIONS[2] + "PRAGMA user_version = 2;")
+        con.execute("INSERT INTO mealdb(id, name, ingredients) VALUES ('5', 'Old soup', '[{\"name\": \"Water\"}]')")
+        con.commit()
+        con.close()
+        dbm.init_db(path)
+        con = dbm.connect(path)
+        self.assertEqual(con.execute("SELECT source, ext_id, title FROM recipes").fetchone()[:], ("mealdb", "5", "Old soup"))
+        con.close()
 
 
 class NotifyTests(Base):
@@ -480,7 +583,8 @@ class AITests(Base):
     def test_new_product_gets_ai_shelf_life(self):
         FakeOllama.answers = {"Estimate how long": json.dumps(
             {"category": "condiments", "pantry_days": 300, "fridge_days": 200, "freezer_days": None,
-             "opened_days": 30, "best_location": "pantry", "note": "Refrigerate after opening."})}
+             "opened_days": 30, "best_location": "pantry", "ingredient_name": "Gochujang",
+             "note": "Refrigerate after opening."})}
         r = self.post("/api/items", {"product": {"name": "Gochujang"}})
         self.assertTrue(r["shelf_job"])
         self.run_jobs()
@@ -488,6 +592,7 @@ class AITests(Base):
         self.assertEqual(j["status"], "done", j)
         p = self.c.get(f"/api/products/{r['product_id']}").json["product"]
         self.assertEqual((p["shelf_source"], p["shelf_pantry_days"], p["category"]), ("ai", 300, "condiments"))
+        self.assertEqual(p["ingredient_name"], "gochujang")
         it = self.c.get("/api/items").json["items"][0]
         self.assertEqual(it["expires_on"], (date.today() + timedelta(days=300)).isoformat())
 
@@ -602,7 +707,7 @@ class AITests(Base):
         self.assertEqual(j["result"]["items"][0]["quantity"], 3)
         self.assertEqual(os.listdir(os.path.join(self.dir, "tmp")), [])     # temp photo deleted
 
-    def test_ai_recipes_rechecked(self):
+    def test_ai_recipes_stored_and_rechecked(self):
         self.post("/api/items", {"product": {"name": "Spaghetti"}})
         self.post("/api/items", {"product": {"name": "Canned tomatoes"}})
         FakeOllama.answers = {"Suggest 6 recipes": json.dumps({"recipes": [
@@ -614,8 +719,12 @@ class AITests(Base):
              "steps": ["Boil pasta.", "Make sauce."]}]})}
         r = self.post("/api/recipes/ai", {"max_missing": 2})
         self.run_jobs()
-        res = self.c.get(f"/api/jobs/{r['job']}").json["job"]["result"]["recipes"][0]
-        self.assertEqual([m["name"] for m in res["missing"]], ["basil"])   # model said in_house; it isn't
+        self.assertEqual(self.c.get(f"/api/jobs/{r['job']}").json["job"]["result"]["count"], 1)
+        feed = self.c.get("/api/recipes?source=ai").json["recipes"]
+        self.assertEqual([m["name"] for m in feed[0]["missing"]], ["basil"])   # model said in_house; it isn't
+        self.assertIn("google.com/search", feed[0]["search_url"])
+        full = self.c.get(f"/api/recipes/{feed[0]['id']}").json["recipe"]
+        self.assertEqual(full["steps"], ["Boil pasta.", "Make sauce."])
 
     def test_ai_not_configured(self):
         self.c.put("/api/settings", json={"ai": {"ai_provider": "none"}}, headers=H)

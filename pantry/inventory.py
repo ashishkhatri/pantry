@@ -13,7 +13,7 @@ from . import db as dbm
 from . import shelf
 from .lookup import normalize_barcode
 
-PRODUCT_FIELDS = ("barcode", "name", "brand", "category", "size_text", "image_url", "default_location", "opened_location",
+PRODUCT_FIELDS = ("barcode", "name", "brand", "category", "size_text", "image_url", "default_location", "opened_location", "ingredient_name",
                   "shelf_pantry_days", "shelf_fridge_days", "shelf_freezer_days", "opened_days", "shelf_source")
 
 
@@ -396,7 +396,7 @@ def pantry_names(con) -> List[dict]:
     """What's in stock, one row per product, for recipe matching."""
     wd = warn_days(con)
     rows = con.execute("""
-        SELECT p.id, p.name, p.category, SUM(i.quantity) AS qty, MIN(i.expires_on) AS first_exp
+        SELECT p.id, p.name, p.ingredient_name, p.category, SUM(i.quantity) AS qty, MIN(i.expires_on) AS first_exp
         FROM items i JOIN products p ON p.id = i.product_id
         WHERE i.finished_on IS NULL GROUP BY p.id ORDER BY p.name COLLATE NOCASE""").fetchall()
     out = []
