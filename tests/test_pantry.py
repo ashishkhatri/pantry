@@ -387,6 +387,15 @@ class AITests(Base):
                                                  "ai_model": "llama3.2:3b", "ai_vision_model": "qwen2.5vl:3b"}},
                    headers=H)
 
+    def test_address_without_http(self):
+        self.assertEqual(ai.normalize_url("192.168.1.25:1234/v1/"), "http://192.168.1.25:1234/v1")
+        self.assertEqual(ai.normalize_url("https://api.anthropic.com"), "https://api.anthropic.com")
+        bare = self.url.replace("http://", "")
+        self.c.put("/api/settings", json={"ai": {"ai_base_url": bare}}, headers=H)
+        self.assertEqual(self.c.get("/api/settings").json["ai"]["ai_base_url"], self.url)
+        r = self.post("/api/ai/test", {"ai": {"ai_provider": "ollama", "ai_base_url": bare, "ai_model": "llama3.2:3b"}})
+        self.assertTrue(r["reply_ok"])
+
     def test_parse_json_variants(self):
         self.assertEqual(ai.parse_json('<think>hmm {x}</think>\n```json\n{"a": 1}\n```'), {"a": 1})
         self.assertEqual(ai.parse_json('Sure! Here it is: {"a": [1,2]} hope that helps'), {"a": [1, 2]})

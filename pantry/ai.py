@@ -53,6 +53,14 @@ PROVIDER_URLS = {
 ANTHROPIC_DEFAULT_MODEL = "claude-haiku-5-5"
 
 
+def normalize_url(url: str) -> str:
+    """Accept what people type: "192.168.1.25:1234/v1" -> "http://192.168.1.25:1234/v1"."""
+    url = (url or "").strip().rstrip("/")
+    if url and not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", url):
+        url = "http://" + url
+    return url
+
+
 class AIError(Exception):
     pass
 
@@ -81,6 +89,8 @@ def save_settings(con, values: dict) -> None:
             continue                     # blank = keep the saved key
         if isinstance(v, bool):
             v = "1" if v else "0"
+        if k == "ai_base_url":
+            v = normalize_url(str(v))
         if k == "ai_provider" and v not in ("none", "ollama", "openai", "anthropic"):
             raise AIError("Unknown AI provider.")
         dbm.set_setting(con, k, str(v).strip())
@@ -122,7 +132,7 @@ class Provider:
 
     def __init__(self, base_url: str, model: str, api_key: str = "", timeout: float = 600, think: bool = False,
                  num_ctx: int = 8192):
-        self.base_url = (base_url or PROVIDER_URLS.get(self.name, "")).rstrip("/")
+        self.base_url = normalize_url(base_url or PROVIDER_URLS.get(self.name, ""))
         self.model = model
         self.api_key = api_key
         self.timeout = timeout
