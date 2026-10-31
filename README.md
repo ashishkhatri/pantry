@@ -213,10 +213,9 @@ python -m unittest discover tests
 python -m pantry --browser          # or start.bat on Windows
 ```
 
-**Releasing:**
-1. Bump `__version__` in `pantry/__init__.py`.
-2. Commit, then `git tag v0.2.0 && git push --tags`.
-3. GitHub Actions runs the tests, publishes `ghcr.io/ashishkhatri/pantry:0.2.0` and `:latest`, and creates the release. The installers pick up the newest release.
+**Releasing:** bump `__version__` in `pantry/__init__.py` and push to `main`. That's all.
+- **What happens:** GitHub Actions sees a version with no release yet. It runs the tests, publishes `ghcr.io/ashishkhatri/pantry:<version>` and `:latest`, and creates the `v<version>` tag and release. The installers then pick up the newest release.
+- **Pushes that don't change the version** only run the tests.
 
 ## Project layout
 

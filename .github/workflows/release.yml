@@ -1,13 +1,48 @@
 name: release
-# Push a tag like v0.2.0 (or create a release with a new v0.2.0 tag on GitHub) to publish ghcr.io/<owner>/pantry:0.2.0 (and :latest) and a GitHub release.
+# Releases happen automatically: bump __version__ in pantry/__init__.py and push to main.
+# If there's no v<version> tag yet, this tests the code, builds and publishes
+# ghcr.io/<owner>/pantry:<version> (and :latest), then creates the tag and GitHub release.
+# Pushing a v* tag yourself, or running this workflow by hand, works too.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
 permissions:
   contents: write
   packages: write
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      release: ${{ steps.v.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          v=$(python3 -c "import pantry; print(pantry.__version__)")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            [ "v$v" = "$GITHUB_REF_NAME" ] || { echo "::error::pantry/__init__.py says $v but the tag is $GITHUB_REF_NAME"; exit 1; }
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          elif git rev-parse -q --verify "refs/tags/v$v" >/dev/null; then
+            echo "v$v is already released; bump __version__ to release again."
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version v$v: releasing."
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
   test:
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,12 +51,9 @@ jobs:
           python-version: "3.12"
       - run: pip install -r requirements.txt
       - run: python -m unittest discover tests
-      - name: Tag matches the app version
-        run: |
-          v=$(python -c "import pantry; print(pantry.__version__)")
-          [ "v$v" = "${GITHUB_REF_NAME}" ] || { echo "pantry/__init__.py says $v but the tag is ${GITHUB_REF_NAME}"; exit 1; }
+
   image:
-    needs: test
+    needs: [plan, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -37,8 +69,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=v${{ needs.plan.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.plan.outputs.version }}
             type=raw,value=latest
       - uses: docker/build-push-action@v6
         with:
@@ -47,14 +79,16 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
   github-release:
-    needs: image
+    needs: [plan, image]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - env:
           GH_TOKEN: ${{ github.token }}
-        # The release may already exist if it was created on GitHub's website (which also makes the tag).
+          TAG: v${{ needs.plan.outputs.version }}
+        # Creates the tag at this commit if it doesn't exist yet (the normal, automatic path).
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --title "Pantry $GITHUB_REF_NAME" --generate-notes
+          gh release view "$TAG" >/dev/null 2>&1 \
+            || gh release create "$TAG" --target "$GITHUB_SHA" --title "Pantry $TAG" --generate-notes
