@@ -95,7 +95,6 @@ select{appearance:none;-webkit-appearance:none;background-image:var(--chev);back
 .thumb{width:40px;height:40px;border-radius:8px;background:var(--bg);flex:0 0 40px;display:grid;place-items:center;overflow:hidden;font-size:20px}
 .thumb img{width:100%;height:100%;object-fit:cover}
 .thumb.zoomable{cursor:zoom-in}
-.photo-preview{display:block;width:100%;max-height:220px;object-fit:contain;background:var(--bg);border-radius:10px;margin:0 0 14px;cursor:zoom-in}
 .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:60;display:none;align-items:center;justify-content:center;padding:16px;cursor:zoom-out}
 .lightbox.show{display:flex}
 .lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5);background:#fff}
@@ -450,7 +449,6 @@ function openPhoto(url){
 function closePhoto(){ $('#lightbox').classList.remove('show'); }
 $('#lightbox').addEventListener('click',closePhoto);
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&$('#lightbox').classList.contains('show')){ e.stopImmediatePropagation(); closePhoto(); } },true);
-function photoPreview(it){ return it.image_url?`<img class="photo-preview" src="${esc(bigImage(it.image_url))}" alt="Photo of ${esc(it.name)}" referrerpolicy="no-referrer" data-photo="${esc(it.image_url)}" onerror="if(!this.dataset.f){this.dataset.f=1;this.src=this.dataset.photo}else{this.remove()}">`:''; }
 function bindPhotos(root){ root.querySelectorAll('[data-photo]').forEach(el=>el.onclick=e=>{ e.stopPropagation(); openPhoto(el.dataset.photo); }); }
 function thumb(it){ return it.image_url?`<div class="thumb"><img src="${esc(it.image_url)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(document.createTextNode('${CAT_ICON[it.category]||'📦'}'))"></div>`:`<div class="thumb">${CAT_ICON[it.category]||'📦'}</div>`; }
 function catOptions(sel){ return CATS.map(c=>`<option value="${c.key}" ${c.key===sel?'selected':''}>${esc(c.label)}</option>`).join(''); }
@@ -609,7 +607,7 @@ async function itemModal(id){
   if(!it){ toast('That item is gone.'); return; }
   const m=openModal(`
     <div class="modal-head">${thumb(it)}<h2>${esc(it.name)}<div class="tiny muted" style="font-weight:400">${esc([it.brand,it.size_text,it.category_label].filter(Boolean).join(' · '))}</div></h2><button class="x" data-close>×</button></div>
-    <div class="modal-body">${photoPreview(it)}
+    <div class="modal-body">
       <div class="field"><label>Quantity</label><div class="stepper"><button data-q="-1">−</button><span id="im-q">${qtyFmt(it.quantity)}</span><button data-q="1">+</button></div></div>
       <div class="field"><label>Stored in</label><select id="im-loc">${locOptions(it.location)}</select></div>
       <div class="field"><label>Good until</label><div class="row" style="flex-wrap:nowrap"><input type="date" id="im-exp" value="${it.expires_on||''}">${it.expires_source==='auto'?'<span class="pill">estimated</span>':'<button class="btn small" id="im-auto">Estimate</button>'}</div></div>
@@ -642,8 +640,8 @@ async function productModal(pid){
   const {product:p}=await api('/api/products/'+pid);
   const d=(k,loc)=>p[k]??'';
   const m=openModal(`
-    <div class="modal-head"><h2>${esc(p.name)}</h2><button class="x" data-close>×</button></div>
-    <div class="modal-body">${photoPreview(p)}
+    <div class="modal-head">${thumb(p)}<h2>${esc(p.name)}</h2><button class="x" data-close>×</button></div>
+    <div class="modal-body">
       <div class="field"><label>Name</label><input type="text" id="pm-name" value="${esc(p.name)}"></div>
       <div class="field"><label>Brand</label><input type="text" id="pm-brand" value="${esc(p.brand||'')}"></div>
       <div class="field"><label>Size</label><input type="text" id="pm-size" value="${esc(p.size_text||'')}"></div>
@@ -656,6 +654,7 @@ async function productModal(pid){
       <div class="field"><label>Once opened</label><input type="number" min="0" id="pm-opened" value="${d('opened_days')}" placeholder="${p.effective_opened_days??'—'}"></div>
     </div>
     <div class="modal-foot"><button class="btn primary" id="pm-save">Save</button>${ME.ai_enabled?'<button class="btn ai-btn" id="pm-ai">✦ Ask AI</button>':''}<span class="spacer"></span><button class="btn" data-close>Cancel</button></div>`);
+  if(p.image_url){ const t=m.querySelector('.modal-head .thumb'); t.classList.add('zoomable'); t.dataset.photo=p.image_url; }
   bindPhotos(m);
   $('#pm-save').onclick=()=>safe(async()=>{
     const num=id=>{const v=$(id).value.trim(); return v===''?null:+v;};
