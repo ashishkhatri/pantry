@@ -25,6 +25,11 @@ die() { printf '\033[1;31m!!\033[0m %s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "Run this as root (or with sudo)."
 command -v apt-get >/dev/null || die "This installer needs a Debian or Ubuntu system. For anything else, use Docker."
+if command -v pveversion >/dev/null 2>&1 && [ "${PANTRY_ALLOW_PVE_HOST:-0}" != "1" ]; then
+  die "This is a Proxmox host. Don't install Pantry on the host itself; run this instead, which creates a container for it:
+   bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/$REPO/main/install/proxmox.sh)\"
+   To update an existing Pantry container from here: pct exec <id> -- pantry-update"
+fi
 
 say "Installing packages"
 export DEBIAN_FRONTEND=noninteractive
