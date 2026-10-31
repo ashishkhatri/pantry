@@ -619,7 +619,7 @@ async function itemModal(id){
       <button class="btn small" id="im-product">Product &amp; shelf-life settings…</button>
     </div>
     <div class="modal-foot"><button class="btn primary" id="im-save">Save</button><span class="spacer"></span>
-      <button class="btn" id="im-use1">Used 1</button><button class="btn" id="im-useall">Used up</button><button class="btn danger" id="im-toss">Toss</button></div>`);
+      ${it.quantity>1?'<button class="btn" id="im-use1">Used 1</button>':''}<button class="btn" id="im-useall">Used up</button><button class="btn danger" id="im-toss">Toss</button></div>`);
   if(it.image_url){ const t=m.querySelector('.modal-head .thumb'); t.classList.add('zoomable'); t.dataset.photo=it.image_url; }
   bindPhotos(m);
   let q=it.quantity;
@@ -632,7 +632,7 @@ async function itemModal(id){
     if(f.opened===!!it.opened_on) delete f.opened;
     await api('/api/items/'+id,{method:'PATCH',json:f}); closeModal(); toast('Saved.'); render();
   });
-  $('#im-use1').onclick=()=>{ closeModal(); useItem(id,'used',1); };
+  if($('#im-use1')) $('#im-use1').onclick=()=>{ closeModal(); useItem(id,'used',1); };
   $('#im-useall').onclick=()=>{ closeModal(); useItem(id,'used','all'); };
   $('#im-toss').onclick=()=>{ closeModal(); useItem(id,'discarded','all'); };
   $('#im-product').onclick=()=>productModal(it.product_id);
