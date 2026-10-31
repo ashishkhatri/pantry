@@ -29,7 +29,12 @@ In the Proxmox host's shell:
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/ashishkhatri/pantry/main/install/proxmox.sh)"
 ```
-This creates a small unprivileged Debian 12 container (1 CPU, 512 MB RAM, 4 GB disk, DHCP on `vmbr0`) that starts on boot, and installs Pantry in it on port **8790**. To change any of that, set variables in front of the command, for example `CTID=150 STORAGE=local-zfs IP=192.168.1.50/24 GW=192.168.1.1 bash -c "$(curl …)"`. The script's header lists them all.
+It works like the community helper scripts.
+1. **Default or advanced:** choose *default settings*, or *advanced* to set the container ID, hostname, disk, CPU, RAM, bridge, static IP and port.
+2. **Storage:** pick where the container goes from the storages on your host that can hold containers, such as `local-zfs` or `local-lvm`. If there's only one, it's used automatically.
+3. **Result:** an unprivileged Debian 12 container that starts on boot, with Pantry on port **8790**. The defaults are 1 CPU, 512 MB RAM, 4 GB disk and DHCP on `vmbr0`.
+
+For an unattended install, set the values and skip the menus: `NONINTERACTIVE=1 STORAGE=local-zfs CTID=150 bash -c "$(curl …)"`.
 
 To update: `pct exec <CTID> -- pantry-update` from the Proxmox shell.
 
