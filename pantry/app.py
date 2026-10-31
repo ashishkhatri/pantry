@@ -600,7 +600,7 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         try:
             return jsonify(models=ai.list_models(c, kind, base))
         except ai.AIError as e:
-            raise ApiError(str(e), 502)
+            raise ApiError(str(e), 400)   # not 502: Cloudflare replaces 5xx bodies with its own page
 
     @app.post("/api/ai/test")
     def ai_test():

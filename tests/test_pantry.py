@@ -392,7 +392,7 @@ class AITests(Base):
             {"provider": "ollama", "base_url": self.url.replace("http://", "")})).json
         self.assertEqual(r["models"], ["llama3.2:3b", "qwen2.5vl:3b"])
         r = self.c.get("/api/ai/models?provider=ollama&base_url=127.0.0.1:1")
-        self.assertEqual(r.status_code, 502)
+        self.assertEqual(r.status_code, 400)
         self.assertIn("isn't answering", r.json["error"])
         # Blank model = first one the server lists (like Budget's "First loaded model")
         self.c.put("/api/settings", json={"ai": {"ai_model": "", "ai_vision_model": ""}}, headers=H)
