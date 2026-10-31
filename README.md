@@ -115,7 +115,12 @@ Every AI feature goes through one swappable interface (`pantry/ai.py`). Pick a p
 | **OpenAI-compatible** | e.g. `http://<host>:1234/v1` | LM Studio, llama.cpp server, vLLM, Ollama's `/v1`, or OpenAI itself (with an API key). |
 | **Anthropic** | `https://api.anthropic.com` | Claude through the API, with your API key. Defaults to `claude-haiku-5-5`. A receipt costs a fraction of a cent. |
 
-There are two model fields. The **text model** does shelf life and recipes. The **vision model** does photos and receipts; if you leave it blank, the text model is used for those too. Click **Test** to list the server's models and check that the model answers.
+The panel works like Budget's, and changes save automatically.
+- **Connect:** enter the server URL (`http://` is optional) and click **Connect**. Both model lists fill in from the server.
+- **Text model:** used for shelf life and recipes. *First loaded model* uses whatever the server lists first.
+- **Image model:** used for receipts and food photos. *Same as text model* works if your text model is a vision model.
+
+Pick models explicitly if your server unloads idle models, so the right one gets loaded again.
 
 **Without a GPU (now):**
 - Ollama runs on the CPU. Small models work but are slow, so a receipt can take a few minutes on a CPU-only server.
@@ -145,7 +150,7 @@ For Ollama, use port 11434 instead.
 **5. Fill in Settings → AI.**
 - **Provider:** OpenAI-compatible for LM Studio, or Ollama.
 - **Address:** `http://<pc-ip>:1234/v1` for LM Studio, or `http://<pc-ip>:11434` for Ollama.
-- Click **Test**, pick a vision model for receipts and photos, and pick a text model.
+- Click **Connect**, then pick the text model, and an image model if it's a different one.
 
 A vision model around 7B handles receipts well on a GPU, such as Qwen2.5-VL 7B or Gemma 3 12B. A single vision model can do both jobs: leave the vision field blank and put it in the text field.
 

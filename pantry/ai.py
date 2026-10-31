@@ -249,6 +249,15 @@ class AnthropicProvider(Provider):
 PROVIDERS = {"ollama": OllamaProvider, "openai": OpenAIProvider, "anthropic": AnthropicProvider}
 
 
+def list_models(con, kind: str, base_url: str = "") -> List[str]:
+    """Models the server offers, for the Settings dropdowns (embedding models left out)."""
+    if kind not in PROVIDERS:
+        raise NotConfigured("Choose a provider first.")
+    p = PROVIDERS[kind](base_url, "", get_settings(con, include_secret=True)["ai_api_key"], 15)
+    p.probe()
+    return [m for m in p.models() if m and "embed" not in m.lower()]
+
+
 def provider(con, vision: bool = False, override: Optional[dict] = None) -> Provider:
     s = {**get_settings(con, include_secret=True), **(override or {})}
     if override and not override.get("ai_api_key"):
@@ -257,10 +266,16 @@ def provider(con, vision: bool = False, override: Optional[dict] = None) -> Prov
     if kind not in PROVIDERS:
         raise NotConfigured("AI isn't set up. Choose a provider in Settings → AI.")
     model = (s["ai_vision_model"] or s["ai_model"]) if vision else s["ai_model"]
+    p = PROVIDERS[kind](s["ai_base_url"], model, s["ai_api_key"], float(s["ai_timeout"] or 600),
+                        s["ai_think"] == "1", int(s["ai_num_ctx"] or 8192))
     if not model and kind != "anthropic":
-        raise NotConfigured("Choose a model in Settings → AI.")
-    return PROVIDERS[kind](s["ai_base_url"], model, s["ai_api_key"], float(s["ai_timeout"] or 600),
-                           s["ai_think"] == "1", int(s["ai_num_ctx"] or 8192))
+        # "First loaded model", like Budget: whatever the server lists first.
+        p.probe()
+        models = [m for m in p.models() if m and "embed" not in m.lower()]
+        if not models:
+            raise NotConfigured("The AI server has no models available. Load one, or pick a model in Settings → AI.")
+        p.model = models[0]
+    return p
 
 
 # ---------------- JSON answers ----------------

@@ -590,6 +590,18 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
                 ai.save_settings(c, b["ai"])
         return jsonify(ok=True)
 
+    @app.get("/api/ai/models")
+    def ai_models():
+        c = con()
+        kind = request.args.get("provider") or ai.get_settings(c)["ai_provider"]
+        base = request.args.get("base_url")
+        if base is None:
+            base = ai.get_settings(c)["ai_base_url"]
+        try:
+            return jsonify(models=ai.list_models(c, kind, base))
+        except ai.AIError as e:
+            raise ApiError(str(e), 502)
+
     @app.post("/api/ai/test")
     def ai_test():
         override = body().get("ai") or None

@@ -387,6 +387,21 @@ class AITests(Base):
                                                  "ai_model": "llama3.2:3b", "ai_vision_model": "qwen2.5vl:3b"}},
                    headers=H)
 
+    def test_model_dropdown_and_first_loaded_model(self):
+        r = self.c.get("/api/ai/models?" + __import__("urllib.parse").parse.urlencode(
+            {"provider": "ollama", "base_url": self.url.replace("http://", "")})).json
+        self.assertEqual(r["models"], ["llama3.2:3b", "qwen2.5vl:3b"])
+        r = self.c.get("/api/ai/models?provider=ollama&base_url=127.0.0.1:1")
+        self.assertEqual(r.status_code, 502)
+        self.assertIn("isn't answering", r.json["error"])
+        # Blank model = first one the server lists (like Budget's "First loaded model")
+        self.c.put("/api/settings", json={"ai": {"ai_model": "", "ai_vision_model": ""}}, headers=H)
+        FakeOllama.answers = {"Estimate how long": json.dumps({"pantry_days": 10})}
+        con = self.con()
+        ai.shelf_life(con, "Bread")
+        con.close()
+        self.assertEqual(FakeOllama.requests[-1]["model"], "llama3.2:3b")
+
     def test_address_without_http(self):
         self.assertEqual(ai.normalize_url("192.168.1.25:1234/v1/"), "http://192.168.1.25:1234/v1")
         self.assertEqual(ai.normalize_url("https://api.anthropic.com"), "https://api.anthropic.com")
