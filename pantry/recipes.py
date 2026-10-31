@@ -491,27 +491,115 @@ def parse_recipe_page(page: str, url: str) -> dict:
     raise LookupError("Couldn't find a recipe on that page. Try the recipe's own page rather than a list or search page.")
 
 
-def import_url(con, url: str, fetch_page=None) -> int:
+class NeedsPaste(LookupError):
+    """The page can't be read automatically (blocked, paywalled, or no recipe data). ``page_text`` is
+    the readable text we did get, if any, for the AI to try."""
+
+    def __init__(self, message: str, page_text: str = ""):
+        super().__init__(message)
+        self.page_text = page_text
+
+
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/126.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+BOT_WALL = re.compile(r"captcha|verify you are (a )?human|are you a robot|access denied|enable javascript and cookies|"
+                      r"unusual traffic|request blocked|attention required|datadome|px-captcha|cf-chl", re.I)
+
+
+def page_text(page: str) -> str:
+    """Readable text of an HTML page (scripts, styles and tags removed)."""
+    t = re.sub(r"(?is)<(script|style|noscript|svg|nav|footer|header)[^>]*>.*?</\1>", " ", page)
+    t = re.sub(r"(?i)<br\s*/?>|</(p|li|h\d|div|tr)>", "\n", t)
+    t = htmlmod.unescape(re.sub(r"<[^>]+>", " ", t))
+    lines = [re.sub(r"[ \t\u00a0]+", " ", ln).strip() for ln in t.splitlines()]
+    return "\n".join(ln for ln in lines if ln)
+
+
+def fetch_html(url: str) -> str:
+    req = urllib.request.Request(url, headers=BROWSER_HEADERS)
+    host = urllib.parse.urlsplit(url).hostname or "that site"
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read(4_000_000).decode(r.headers.get_content_charset() or "utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 402, 403, 429, 451):
+            raise NeedsPaste(f"{host} blocks automated readers (it answered {e.code}). Paste the recipe text instead.") from e
+        raise LookupError(f"{host} answered {e.code}.") from e
+    except OSError as e:
+        raise LookupError(f"Couldn't open that link ({getattr(e, 'reason', e)}).") from e
+
+
+def read_link(url: str, fetch_page=None) -> dict:
+    """A recipe from a page's schema.org data, or NeedsPaste explaining why not."""
     url = url.strip()
     if not re.match(r"^https?://", url):
         raise LookupError("Paste a full link starting with http:// or https://.")
-    if fetch_page is None:
-        def fetch_page(u):
-            req = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0 (compatible; PantryApp recipe import)",
-                                                     "Accept": "text/html,application/xhtml+xml"})
-            try:
-                with urllib.request.urlopen(req, timeout=20) as r:
-                    return r.read(4_000_000).decode(r.headers.get_content_charset() or "utf-8", errors="replace")
-            except urllib.error.HTTPError as e:
-                raise LookupError(f"That site answered {e.code}; it may block automated readers.") from e
-            except OSError as e:
-                raise LookupError(f"Couldn't open that link ({e}).") from e
-    rec = parse_recipe_page(fetch_page(url), url)
-    rid = store(con, rec)
+    page = (fetch_page or fetch_html)(url)
+    try:
+        return parse_recipe_page(page, url)
+    except LookupError:
+        pass
+    host = (urllib.parse.urlsplit(url).hostname or "").removeprefix("www.")
+    text = page_text(page)
+    if BOT_WALL.search(page[:200_000]) and len(text) < 4000:
+        raise NeedsPaste(f"{host} showed a bot check instead of the recipe (paywalled sites like NYT Cooking do this). "
+                         "Paste the recipe text instead.")
+    raise NeedsPaste(f"{host} doesn't publish its recipe in a form Pantry can read. Paste the recipe text instead.",
+                     page_text=text if len(text) > 400 else "")
+
+
+def import_url(con, url: str, fetch_page=None) -> int:
+    """Import a link that has schema.org recipe data (raises NeedsPaste otherwise)."""
+    rid = store(con, read_link(url, fetch_page))
     if not rid:
         raise LookupError("That page's recipe has no ingredient list.")
     con.commit()
     return rid
+
+
+HEADER_ING = re.compile(r"^\s*(ingredients?|you('|’)ll need|what you need)\b\s*:?\s*$", re.I)
+HEADER_STEPS = re.compile(r"^\s*(preparation|directions?|instructions?|method|steps?|how to make( it)?)\b\s*:?\s*$", re.I)
+HEADER_END = re.compile(r"^\s*(notes?|tips?|nutrition(al)? (information|facts)|ratings?|comments?|cooking notes)\b", re.I)
+QTY = re.compile(r"^\s*([\d½¼¾⅓⅔⅛]|a |an |one |two |three |four |pinch|dash|handful|salt|pepper|\d)", re.I)
+
+
+def parse_pasted(text: str, url: str = "", title: str = "") -> dict:
+    """Split pasted recipe text into ingredients and steps without AI: by its section headings, or by
+    which lines look like quantities."""
+    lines = [re.sub(r"^\s*([-•*▢□☐]|\d+[.)])\s+", "", ln).strip() for ln in (text or "").splitlines()]
+    lines = [ln for ln in lines if ln]
+    if not lines:
+        raise LookupError("Paste the recipe's ingredients and steps.")
+    ings, steps, mode, head = [], [], None, []
+    for ln in lines:
+        if HEADER_ING.match(ln):
+            mode = "ing"
+            continue
+        if HEADER_STEPS.match(ln):
+            mode = "steps"
+            continue
+        if HEADER_END.match(ln) and mode == "steps":
+            mode = "end"
+            continue
+        if mode == "ing":
+            ings.append(ln)
+        elif mode == "steps":
+            steps.append(ln)
+        elif mode is None:
+            head.append(ln)
+    if not ings:     # no headings: quantity-looking short lines are ingredients, long ones are steps
+        for ln in head[1:] if len(head) > 1 else head:
+            (ings if QTY.match(ln) and len(ln) < 90 else steps).append(ln)
+        head = head[:1]
+    if not ings:
+        raise LookupError("Couldn't find the ingredient list. Include the \"Ingredients\" section when you paste.")
+    t = title or (head[0] if head and len(head[0]) < 120 else "") or "Pasted recipe"
+    return {"source": "link", "title": t, "url": url or None, "summary": None,
+            "ingredients": [{"name": i, "amount": ""} for i in ings], "steps": steps or None}
 
 
 def web_search_url(title: str) -> str:

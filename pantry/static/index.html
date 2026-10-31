@@ -340,7 +340,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
   <section class="view" id="view-recipes">
     <div class="row" style="margin-bottom:6px">
       <h2 style="margin:0">Recipes</h2><span class="spacer"></span>
-      <button class="btn small" id="recipe-link">+ Add from a link</button>
+      <button class="btn small" id="recipe-link">+ Add a recipe</button>
       <button class="btn small ai-btn" id="recipe-ai">✦ New AI ideas</button>
     </div>
     <p class="sub small" id="recipe-status" style="margin:0 0 12px"></p>
@@ -471,7 +471,7 @@ async function api(path,opts={}){
   try{ r=await fetch(path,o); }catch(e){ throw new Error('Can’t reach the Pantry server. Check your connection.'); }
   let d=null; try{d=await r.json();}catch(e){}
   if(r.status===401&&d&&d.login){ showLogin(); throw new Error('Please sign in.'); }
-  if(!r.ok) throw new Error((d&&d.error)||('Request failed ('+r.status+')'));
+  if(!r.ok){ const e=new Error((d&&d.error)||('Request failed ('+r.status+')')); e.data=d; throw e; }
   return d;
 }
 async function safe(fn){ try{ return await fn(); }catch(e){ console.error(e); toast(e.message); } }
@@ -1080,14 +1080,37 @@ async function recipeModal(id){
   const del=$('#rm-del'); if(del) del.onclick=()=>safe(async()=>{ await api('/api/recipes/'+id,{method:'DELETE'}); closeModal(); toast('Deleted.'); renderRecipes(); });
 }
 $('#recipe-link').onclick=()=>{
-  openModal(`<div class="modal-head"><h2>Add a recipe from a link</h2><button class="x" data-close>×</button></div>
-    <div class="modal-body"><p class="small muted" style="margin-top:0">Paste the page of any recipe (a blog, AllRecipes, NYT Cooking, BBC Good Food…). Pantry reads its ingredients and keeps the link to the original.</p>
-      <input type="url" id="rl-url" placeholder="https://…"><div id="rl-msg" class="small neg" style="margin-top:8px"></div></div>
+  openModal(`<div class="modal-head"><h2>Add a recipe</h2><button class="x" data-close>×</button></div>
+    <div class="modal-body"><p class="small muted" style="margin-top:0">Paste the link to any recipe page. Pantry reads its ingredients and keeps the link to the original.</p>
+      <input type="url" id="rl-url" placeholder="https://…">
+      <div id="rl-msg" class="small" style="margin-top:8px"></div>
+      <div id="rl-paste" style="display:none;margin-top:10px">
+        <label class="small muted">Recipe text: in your browser, select the recipe from the title through the last step, copy it, and paste it here.</label>
+        <textarea id="rl-text" rows="10" placeholder="Senate Bean Soup&#10;&#10;Ingredients&#10;1 pound dried navy beans&#10;…&#10;&#10;Preparation&#10;1. Soak the beans…" style="margin-top:6px"></textarea>
+      </div>
+      <p class="tiny muted" style="margin:10px 0 0"><a href="#" id="rl-show-paste">No link? Paste the recipe text instead.</a></p></div>
     <div class="modal-foot"><button class="btn primary" id="rl-go">Add recipe</button><span class="spacer"></span><button class="btn" data-close>Cancel</button></div>`);
   setTimeout(()=>$('#rl-url').focus(),60);
-  const go_=async()=>{ const b=$('#rl-go'); b.disabled=true; b.textContent='Reading the page…'; $('#rl-msg').textContent='';
-    try{ const {recipe}=await api('/api/recipes/import',{json:{url:$('#rl-url').value}}); closeModal(); toast(`Added “${recipe.title}”.`); recipeFilter=''; await renderRecipes(); recipeModal(recipe.id); }
-    catch(e){ $('#rl-msg').textContent=e.message; b.disabled=false; b.textContent='Add recipe'; } };
+  const showPaste=(why)=>{ $('#rl-paste').style.display=''; $('#rl-show-paste').parentElement.style.display='none';
+    if(why){ $('#rl-msg').className='small warn'; $('#rl-msg').textContent=why; } setTimeout(()=>$('#rl-text').focus(),50); };
+  $('#rl-show-paste').onclick=e=>{ e.preventDefault(); showPaste(''); };
+  const done=async(id,title)=>{ closeModal(); toast(`Added “${title}”.`); recipeFilter=''; if(view==='recipes') await renderRecipes(); recipeModal(id); };
+  const go_=async()=>{
+    const b=$('#rl-go'), url=$('#rl-url').value.trim(), text=$('#rl-text').value.trim();
+    if(!url&&!text){ $('#rl-url').focus(); return; }
+    b.disabled=true; b.textContent=text?'Reading the recipe…':'Reading the page…'; $('#rl-msg').className='small'; $('#rl-msg').textContent='';
+    try{
+      const r=await api('/api/recipes/import',{json:{url,text}});
+      if(r.recipe){ await done(r.recipe.id,r.recipe.title); return; }
+      closeModal(); toast('Reading the recipe in the background…');
+      const res=await pollJob(r.job,'The AI is reading the recipe…'); await done(res.id,res.title);
+    }catch(e){
+      if(e.data&&e.data.paste){ showPaste(e.message); }
+      else if($('#rl-msg')){ $('#rl-msg').className='small neg'; $('#rl-msg').textContent=e.message; }
+      else toast(e.message,[],8000);
+      if($('#rl-go')){ b.disabled=false; b.textContent='Add recipe'; }
+    }
+  };
   $('#rl-go').onclick=go_; $('#rl-url').addEventListener('keydown',e=>{ if(e.key==='Enter') go_(); });
 };
 $('#recipe-ai').onclick=()=>{

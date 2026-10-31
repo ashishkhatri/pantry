@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -599,9 +600,35 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
 
     @app.post("/api/recipes/import")
     def recipes_import():
+        """Add a recipe from a link. Order of attempts:
+        1. the page's schema.org recipe data (instant);
+        2. if the page was readable but had no such data and AI is on: the AI reads the page text (job);
+        3. otherwise ask for the recipe text to be pasted (answer has paste=true), then parse that,
+           with the AI when it's on (job), or by its headings when it isn't. The link is kept either way."""
         c = con()
-        rid = recipes.import_url(c, str(body().get("url") or ""))
-        return jsonify(recipe=recipes.get(c, rid))
+        b = body()
+        url = str(b.get("url") or "").strip()
+        text = str(b.get("text") or "").strip()
+        if url and not re.match(r"^https?://", url):
+            raise ApiError("Paste a full link starting with http:// or https://.")
+        if text:
+            if ai.enabled(c):
+                return jsonify(job=runner.submit(c, "import_recipe", {"url": url, "text": text[:30000]}, uid()))
+            rid = recipes.store(c, recipes.parse_pasted(text, url))
+            c.commit()
+            return jsonify(recipe=recipes.get(c, rid))
+        if not url:
+            raise ApiError("Paste a link, or the recipe text.")
+        try:
+            rid = recipes.import_url(c, url)
+            return jsonify(recipe=recipes.get(c, rid))
+        except recipes.NeedsPaste as e:
+            if e.page_text and ai.enabled(c):
+                return jsonify(job=runner.submit(c, "import_recipe", {"url": url, "text": e.page_text[:30000],
+                                                                      "from_page": True}, uid()))
+            return jsonify(error=str(e), paste=True), 400
+        except LookupError as e:          # couldn't open it at all: pasting still works
+            return jsonify(error=f"{e} You can paste the recipe text instead.", paste=True), 400
 
     @app.post("/api/recipes/<int:rid>/hide")
     def recipe_hide(rid):
@@ -917,6 +944,17 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
                                  payload.get("request", ""))
         return {"ids": store_ai_recipes(c, res["recipes"]), "count": len(res["recipes"])}
 
+    def import_recipe(c, payload, **_):
+        try:
+            rec = ai.extract_recipe(c, payload["text"])
+        except ai.AIError as e:
+            if payload.get("from_page"):
+                raise ai.AIError("Couldn't find the recipe on that page. Paste the recipe text instead.") from e
+            raise
+        rid = recipes.store(c, {**rec, "source": "link", "url": payload.get("url") or None})
+        c.commit()
+        return {"id": rid, "title": rec["title"]}
+
     def feed_refresh(c, payload, **_):
         """Keep the recipe feed full: the library (first time), web recipes for what you have
         (with a Spoonacular key), and a few new AI recipes. One source failing doesn't stop the rest."""
@@ -951,3 +989,4 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
     runner.register("mealdb", mealdb)
     runner.register("recipes", recipes_ai)
     runner.register("feed_refresh", feed_refresh)
+    runner.register("import_recipe", import_recipe)

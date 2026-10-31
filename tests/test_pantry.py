@@ -352,6 +352,47 @@ class RecipeTests(Base):
         with self.assertRaises(LookupError):
             recipes.parse_recipe_page("<html>no recipe here</html>", "https://x.example")
 
+    PASTED = """Senate Bean Soup
+By A Cook
+
+Ingredients
+1 pound dried navy beans, soaked overnight
+1 smoked ham hock
+1 large onion, chopped
+Salt and pepper
+
+Preparation
+1. Drain the beans and put them in a pot with the ham hock and 3 quarts water.
+2. Simmer 2 hours, add the onion, and cook 30 minutes more.
+Cooking Notes
+Great with cornbread.
+"""
+
+    def test_blocked_link_asks_for_paste(self):
+        bot = "<html><head><title>Are you a robot?</title></head><body>Please verify you are a human. captcha</body></html>"
+        with mock.patch.object(recipes, "fetch_html", return_value=bot):
+            r = self.c.post("/api/recipes/import", json={"url": "https://cooking.nytimes.com/recipes/1-soup"}, headers=H)
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(r.json["paste"])
+        self.assertIn("bot check", r.json["error"])
+        with mock.patch.object(recipes, "fetch_html", side_effect=recipes.NeedsPaste("blocked (403)")):
+            r = self.c.post("/api/recipes/import", json={"url": "https://x.example/r"}, headers=H)
+        self.assertTrue(r.json["paste"])
+
+    def test_paste_without_ai(self):
+        self.post("/api/items", {"product": {"name": "Yellow onion"}})
+        r = self.post("/api/recipes/import", {"url": "https://cooking.nytimes.com/recipes/1-soup", "text": self.PASTED})
+        rec = r["recipe"]
+        self.assertEqual((rec["title"], rec["site"], rec["source"]), ("Senate Bean Soup", "cooking.nytimes.com", "link"))
+        self.assertEqual(len(rec["ingredients"]), 4)
+        self.assertEqual(len(rec["steps"]), 2)                       # cooking notes left out
+        self.assertIn("1 large onion, chopped", [h["name"] for h in rec["have"]])
+        self.assertIn("Salt and pepper", [h["name"] for h in rec["have"]])     # staples
+        # No headings at all: quantity lines become ingredients
+        loose = "Quick Beans\n2 cups beans\n1 onion\nCook the beans with the onion until soft, about 20 minutes."
+        rec = recipes.parse_pasted(loose)
+        self.assertEqual(([i["name"] for i in rec["ingredients"]], len(rec["steps"])), (["2 cups beans", "1 onion"], 1))
+
     def test_spoonacular(self):
         self._seed_library()
         self.post("/api/items", {"product": {"name": "Baby spinach"}})
@@ -706,6 +747,28 @@ class AITests(Base):
         self.assertEqual([i["name"] for i in j["result"]["items"]], ["Black beans"])
         self.assertEqual(j["result"]["items"][0]["quantity"], 3)
         self.assertEqual(os.listdir(os.path.join(self.dir, "tmp")), [])     # temp photo deleted
+
+    def test_paste_with_ai_and_page_without_recipe_data(self):
+        FakeOllama.answers = {"Below is the text of a recipe": json.dumps({
+            "title": "Senate Bean Soup", "summary": "A classic.", "time_minutes": 180, "servings": 8,
+            "ingredients": [{"name": "navy beans", "amount": "1 pound, soaked"}, {"name": "ham hock", "amount": "1"},
+                            {"name": "onion", "amount": "1 large"}],
+            "steps": ["Simmer the beans with the ham hock.", "Add onion."]})}
+        r = self.post("/api/recipes/import", {"url": "https://cooking.nytimes.com/recipes/1-soup", "text": RecipeTests.PASTED})
+        self.run_jobs()
+        res = self.c.get(f"/api/jobs/{r['job']}").json["job"]["result"]
+        rec = self.c.get(f"/api/recipes/{res['id']}").json["recipe"]
+        self.assertEqual((rec["title"], rec["site"], rec["time_minutes"]), ("Senate Bean Soup", "cooking.nytimes.com", 180))
+        self.assertEqual(rec["ingredients"][0], {"name": "navy beans", "amount": "1 pound, soaked"})
+        # A readable page with no schema.org data: the AI reads the page text
+        page = "<html><body><h1>Senate Bean Soup</h1>" + "<p>Some story about soup.</p>" * 30 + \
+               "<h2>Ingredients</h2><ul><li>1 pound navy beans</li><li>1 ham hock</li></ul></body></html>"
+        with mock.patch.object(recipes, "fetch_html", return_value=page):
+            r = self.post("/api/recipes/import", {"url": "https://blog.example/soup"})
+        self.assertIn("job", r)
+        self.run_jobs()
+        self.assertEqual(self.c.get(f"/api/jobs/{r['job']}").json["job"]["status"], "done")
+        self.assertIn("Some story about soup", FakeOllama.requests[-1]["messages"][-1]["content"])
 
     def test_ai_recipes_stored_and_rechecked(self):
         self.post("/api/items", {"product": {"name": "Spaghetti"}})

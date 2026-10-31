@@ -425,6 +425,30 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
             "note": str(d.get("note") or "")[:200]}
 
 
+def extract_recipe(con, text: str) -> dict:
+    """Turn a recipe page's text (or text someone pasted) into a structured recipe."""
+    p = provider(con)
+    prompt = (
+        "Below is the text of a recipe (copied from a web page, possibly with clutter around it).\n"
+        "Extract the recipe. Return JSON: {\"title\": str, \"summary\": one sentence or null, "
+        "\"time_minutes\": total minutes or null, \"servings\": integer or null, "
+        "\"ingredients\": [{\"name\": the plain ingredient as a shopper would say it, lowercase, no amounts, "
+        "e.g. \"great northern beans\", \"smoked ham hock\", \"onion\", \"amount\": the amount and preparation "
+        "as written, e.g. \"1 pound, soaked overnight\"}], \"steps\": [each instruction step as a string]}\n"
+        "Use only what the text says. If there is no recipe in the text, return {\"title\": null}.\n\n"
+        "TEXT:\n" + text[:14000])
+    d = ask_json(p, "extract", SYSTEM, prompt, None, 3000)
+    if not isinstance(d, dict) or not d.get("title"):
+        raise AIError("The AI didn't find a recipe in that text.")
+    ings = [{"name": str(i.get("name") or "").strip()[:100], "amount": str(i.get("amount") or "").strip()[:80]}
+            for i in d.get("ingredients") or [] if isinstance(i, dict) and i.get("name")]
+    if not ings:
+        raise AIError("The AI didn't find an ingredient list in that text.")
+    return {"title": str(d["title"]).strip()[:200], "summary": (str(d.get("summary") or "").strip()[:300] or None),
+            "time_minutes": _int_or_none(d.get("time_minutes"), 0, 2880), "servings": _int_or_none(d.get("servings"), 1, 100),
+            "ingredients": ings, "steps": [str(x).strip()[:600] for x in d.get("steps") or [] if str(x).strip()][:40] or None}
+
+
 def suggest_recipes(con, pantry: List[dict], staples: List[str], max_missing: int = 3, count: int = 6,
                     request: str = "") -> dict:
     p = provider(con)

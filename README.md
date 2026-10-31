@@ -196,7 +196,7 @@ With AI on, each **new** product is sent to the AI once.
 | Source | How |
 |---|---|
 | **Library** | TheMealDB's ~300 recipes, downloaded automatically the first time you open Recipes. |
-| **My links** | **+ Add from a link**: paste any recipe page (food blogs, AllRecipes, NYT Cooking, BBC Good Food…). Pantry reads the recipe data most recipe sites publish (schema.org) and keeps a link to the original. |
+| **My links** | **+ Add a recipe**: paste any recipe page. Pantry reads the recipe data most sites publish (schema.org) and keeps a link to the original. Sites that block automated readers or sit behind a paywall (NYT Cooking) show a box to **paste the recipe text** instead; the link is still kept. With AI on, the AI tidies pasted text and reads pages that don't publish recipe data. |
 | **Web** | With a free [Spoonacular](https://spoonacular.com/food-api) key in **Settings → Recipes**, Pantry searches recipes from across the web by what you have, starting with what expires soon. Each one links to its original site. |
 | **AI** | **✦ New AI ideas**, or automatically a few per refresh (Settings → Recipes). Each AI recipe has a *Find it on the web* link. |
 
