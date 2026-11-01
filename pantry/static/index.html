@@ -62,6 +62,7 @@ h3{font-size:13px;margin:0 0 10px;font-weight:650;text-transform:uppercase;lette
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
 .btn.primary:hover{filter:brightness(1.08)}
 .btn.danger{color:var(--neg)}
+.btn.danger-solid{background:var(--neg);border-color:var(--neg);color:#fff}
 .btn.small{padding:4px 10px;font-size:13px}
 .btn.ai-btn{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 .btn:disabled{opacity:.5;cursor:default}
@@ -99,6 +100,8 @@ select{appearance:none;-webkit-appearance:none;background-image:var(--chev);back
 .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.88);z-index:60;display:none;align-items:center;justify-content:center;padding:16px;cursor:zoom-out}
 .lightbox.show{display:flex}
 .lightbox img{max-width:100%;max-height:100%;object-fit:contain;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5);background:#fff}
+.lightbox.tall{overflow-y:auto;align-items:flex-start}
+.lightbox.tall img{max-height:none;width:min(100%,640px);height:auto;margin:auto}
 .lightbox .x{position:absolute;top:max(12px,env(safe-area-inset-top));right:14px;border:0;background:rgba(255,255,255,.15);color:#fff;width:40px;height:40px;border-radius:50%;font-size:24px;cursor:pointer}
 .it .main{flex:1;min-width:0}
 .it .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -501,6 +504,9 @@ function bigImage(url){ return String(url||'').replace(/\.(100|200)\.jpg(\?.*)?$
 function openPhoto(url){
   const lb=$('#lightbox'), img=lb.querySelector('img');
   img.onerror=()=>{ img.onerror=null; img.src=url; };     // no 400px version: show the original
+  // Tall pictures (receipts): full width, scroll down them, instead of shrinking the text to fit.
+  img.onload=()=>{ lb.classList.toggle('tall',img.naturalHeight>img.naturalWidth*1.6); };
+  lb.classList.remove('tall'); lb.scrollTop=0;
   img.referrerPolicy='no-referrer'; img.src=bigImage(url); lb.classList.add('show');
 }
 function closePhoto(){ $('#lightbox').classList.remove('show'); }
@@ -555,6 +561,20 @@ async function shrink(file,max=1600,q=.85){
     c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
     return await new Promise(r=>c.toBlob(r,'image/jpeg',q));
   }catch(e){ return file; }
+}
+// The copy of a receipt that's kept: black & white, ~700px wide, compressed (roughly 40-150 KB) but readable.
+async function receiptArchive(file){
+  try{
+    const bmp=await createImageBitmap(file,{imageOrientation:'from-image'});
+    // Width decides how readable the text is; long receipts just get taller.
+    const sc=Math.min(1,700/Math.min(bmp.width,bmp.height),3600/Math.max(bmp.width,bmp.height));
+    const c=document.createElement('canvas'); c.width=Math.round(bmp.width*sc); c.height=Math.round(bmp.height*sc);
+    const ctx=c.getContext('2d'); ctx.drawImage(bmp,0,0,c.width,c.height);
+    const img=ctx.getImageData(0,0,c.width,c.height), d=img.data;
+    for(let i=0;i<d.length;i+=4){ let y=.299*d[i]+.587*d[i+1]+.114*d[i+2]; y=Math.max(0,Math.min(255,(y-128)*1.25+140)); d[i]=d[i+1]=d[i+2]=y; }
+    ctx.putImageData(img,0,0);
+    return await new Promise(r=>c.toBlob(r,'image/jpeg',.5));
+  }catch(e){ return null; }
 }
 function pickImage(input){ return new Promise(res=>{ const el=$(input); el.value=''; el.onchange=()=>res(el.files[0]||null); el.click(); }); }
 async function upload(url,blob){
@@ -911,7 +931,7 @@ async function photoIdentify(){
 /* ---------- review lines (photo & receipt) ---------- */
 function reviewLines(lines,{title,source,receiptId=null,store=null,date=null}){
   const m=openModal(`
-    <div class="modal-head"><h2>${esc(title)}${store||date?`<div class="tiny muted" style="font-weight:400">${esc([store,date&&fmtDate(date)].filter(Boolean).join(' · '))}</div>`:''}</h2><button class="x" data-close>×</button></div>
+    <div class="modal-head"><h2>${esc(title)}${store||date?`<div class="tiny muted" style="font-weight:400">${esc([store,date&&fmtDate(date)].filter(Boolean).join(' · '))}</div>`:''}</h2>${receiptId?`<button class="btn small" data-photo="/api/receipts/${receiptId}/image">View receipt</button>`:''}<button class="x" data-close>×</button></div>
     <div class="modal-body" style="padding:0">
       <p class="small muted" style="padding:12px 16px 0;margin:0">Untick anything you don't want to track. Names are editable. <span class="pill ok">linked</span> means it matched something you've bought before.</p>
       <div id="rv-lines" style="margin-top:8px">${lines.map((l,i)=>`
@@ -923,7 +943,17 @@ function reviewLines(lines,{title,source,receiptId=null,store=null,date=null}){
           <select class="ln-loc">${locOptions(l.location||'pantry')}</select>
         </div>`).join('')}</div>
     </div>
-    <div class="modal-foot"><button class="btn primary" id="rv-ok"></button><span class="spacer"></span><button class="btn" data-close>Cancel</button></div>`,{wide:true});
+    <div class="modal-foot"><button class="btn primary" id="rv-ok"></button><span class="spacer"></span>${receiptId?'<button class="btn danger" id="rv-del">Delete receipt</button>':''}<button class="btn" data-close>Cancel</button></div>`,{wide:true});
+  bindPhotos(m);
+  const del=m.querySelector('#rv-del');
+  if(del) del.onclick=()=>{
+    // Ask in place: a second tap on "Yes, delete" removes the receipt and its photo for good.
+    const foot=del.parentElement; const prev=foot.innerHTML;
+    foot.innerHTML=`<span class="small" style="flex:1">Delete this receipt and its photo permanently? Nothing is added to the pantry.</span>
+      <button class="btn danger-solid" id="rv-del-yes">Yes, delete</button><button class="btn" id="rv-del-no">No</button>`;
+    $('#rv-del-no').onclick=()=>{ closeModal(); openReceipt(receiptId); };
+    $('#rv-del-yes').onclick=()=>safe(async()=>{ await api('/api/receipts/'+receiptId,{method:'DELETE'}); closeModal(); toast('Receipt deleted.'); render(); });
+  };
   const count=()=>{ const n=m.querySelectorAll('.rline input[type=checkbox]:checked').length; $('#rv-ok').textContent=`Add ${n} item${n!==1?'s':''}`; $('#rv-ok').disabled=!n; };
   m.querySelectorAll('.rline input[type=checkbox]').forEach(c=>c.onchange=()=>{ c.closest('.rline').classList.toggle('skip',!c.checked); count(); });
   count();
@@ -946,9 +976,10 @@ async function renderReceipts(){
   $('#receipts-noai').style.display=ME.ai_enabled?'none':''; $('#receipt-new').disabled=!ME.ai_enabled;
   const {receipts}=await api('/api/receipts');
   const st={processing:'<span class="pill"><span class="spin" style="display:inline-block;width:9px;height:9px;vertical-align:-1px"></span> reading</span>',review:'<span class="pill warn">ready to review</span>',done:'<span class="pill ok">added</span>',error:'<span class="pill neg">failed</span>'};
-  $('#receipts-list').innerHTML=receipts.length?`<div class="list">${receipts.map(r=>`<div class="it" data-r="${r.id}"><div class="thumb">🧾</div><div class="main"><div class="name">${esc(r.store||'Receipt')} ${r.purchased_on?'<span class="muted" style="font-weight:400">'+esc(fmtDate(r.purchased_on))+'</span>':''}</div>
+  $('#receipts-list').innerHTML=receipts.length?`<div class="list">${receipts.map(r=>`<div class="it" data-r="${r.id}">${r.has_image?`<div class="thumb zoomable" data-photo="/api/receipts/${r.id}/image" title="View receipt"><img src="/api/receipts/${r.id}/image" alt="" loading="lazy"></div>`:'<div class="thumb">🧾</div>'}<div class="main"><div class="name">${esc(r.store||'Receipt')} ${r.purchased_on?'<span class="muted" style="font-weight:400">'+esc(fmtDate(r.purchased_on))+'</span>':''}</div>
     <div class="meta">Scanned ${esc(new Date(r.created_at.replace(' ','T')+'Z').toLocaleDateString([], {month:'short',day:'numeric'}))}${r.user_name?' by '+esc(r.user_name):''}${r.status==='done'?` · ${r.items_added} items added`:''}</div></div>${st[r.status]||''}</div>`).join('')}</div>`:'<div class="card empty">No receipts yet.</div>';
-  $$('#receipts-list [data-r]').forEach(el=>el.onclick=()=>openReceipt(+el.dataset.r));
+  bindPhotos($('#receipts-list'));
+  $$('#receipts-list [data-r]').forEach(el=>el.onclick=e=>{ if(e.target.closest('[data-photo]')) return; openReceipt(+el.dataset.r); });
   if(receipts.some(r=>r.status==='processing')){ clearTimeout(window._rcpt); window._rcpt=setTimeout(()=>{ if(view==='receipts') safe(renderReceipts); },5000); }
 }
 async function openReceipt(id){
@@ -960,7 +991,9 @@ async function openReceipt(id){
 $('#receipt-new').onclick=async()=>{
   const f=await pickImage('#file-receipt'); if(!f) return;
   await safe(async()=>{
-    const {receipt_id,job}=await upload('/api/receipts',await shrink(f,2000,.88));
+    const fd=new FormData(); fd.append('image',await shrink(f,2000,.88),'receipt.jpg');
+    const arch=await receiptArchive(f); if(arch) fd.append('archive',arch,'receipt-small.jpg');
+    const {receipt_id,job}=await api('/api/receipts',{method:'POST',body:fd});
     render();
     toast('Receipt uploaded. You can leave this page; it keeps reading on the server.');
     const res=await pollJob(job,'Reading the receipt…');

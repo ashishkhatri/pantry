@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import threading
 import time
 import uuid
@@ -476,8 +477,8 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
 
     # ---------------- photos & receipts (AI jobs) ----------------
 
-    def _save_upload(folder: Path, name: str) -> Path:
-        f = request.files.get("image")
+    def _save_upload(folder: Path, name: str, field: str = "image") -> Path:
+        f = request.files.get(field)
         if not f:
             raise ApiError("No image received.")
         if f.mimetype not in IMAGE_TYPES:
@@ -501,17 +502,25 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
             raise ApiError("Receipt reading needs AI. Set it up in Settings → AI.")
         with c:
             rid = c.execute("INSERT INTO receipts(user_id) VALUES (?)", (uid(),)).lastrowid
-        path = _save_upload(data_dir / "receipts", f"{rid}.jpg")
-        job = runner.submit(c, "receipt", {"path": str(path), "receipt_id": rid}, uid())
+        # The full-size photo is only for the AI to read; it's deleted once read. What's kept is the small
+        # black & white copy the phone made ("archive"), or the full photo if an older page sent none.
+        full = _save_upload(data_dir / "tmp", f"receipt-{rid}-full.jpg")
+        keep = data_dir / "receipts" / f"{rid}.jpg"
+        if request.files.get("archive"):
+            _save_upload(data_dir / "receipts", f"{rid}.jpg", "archive")
+        else:
+            shutil.copyfile(full, keep)
+        job = runner.submit(c, "receipt", {"path": str(full), "receipt_id": rid}, uid())
         with c:
-            c.execute("UPDATE receipts SET image_path = ?, job_id = ? WHERE id = ?", (str(path), job, rid))
+            c.execute("UPDATE receipts SET image_path = ?, job_id = ? WHERE id = ?", (str(keep), job, rid))
         return jsonify(receipt_id=rid, job=job)
 
     @app.get("/api/receipts")
     def receipts_list():
         rows = con().execute("SELECT r.*, u.name AS user_name FROM receipts r LEFT JOIN users u ON u.id = r.user_id "
                              "ORDER BY r.id DESC LIMIT 50").fetchall()
-        return jsonify(receipts=[{k: r[k] for k in r.keys() if k != "image_path"} for r in rows])
+        return jsonify(receipts=[{**{k: r[k] for k in r.keys() if k != "image_path"},
+                                  "has_image": bool(r["image_path"] and Path(r["image_path"]).exists())} for r in rows])
 
     @app.get("/api/receipts/<int:rid>")
     def receipt_get(rid):
@@ -528,7 +537,9 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         r = con().execute("SELECT image_path FROM receipts WHERE id = ?", (rid,)).fetchone()
         if not r or not r[0] or not Path(r[0]).exists():
             raise ApiError("No image.", 404)
-        return send_file(r[0], mimetype="image/jpeg")
+        resp = send_file(r[0], mimetype="image/jpeg", max_age=86400)
+        resp.headers["Cache-Control"] = "private, max-age=86400"
+        return resp
 
     @app.post("/api/receipts/<int:rid>/retry")
     def receipt_retry(rid):
@@ -536,7 +547,8 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         r = c.execute("SELECT * FROM receipts WHERE id = ?", (rid,)).fetchone()
         if not r or not r["image_path"]:
             raise ApiError("Receipt not found.", 404)
-        job = runner.submit(c, "receipt", {"path": r["image_path"], "receipt_id": rid}, uid())
+        full = data_dir / "tmp" / f"receipt-{rid}-full.jpg"      # still here if the last read failed
+        job = runner.submit(c, "receipt", {"path": str(full if full.exists() else r["image_path"]), "receipt_id": rid}, uid())
         with c:
             c.execute("UPDATE receipts SET status = 'processing', job_id = ? WHERE id = ?", (job, rid))
         return jsonify(job=job)
@@ -547,6 +559,7 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         r = c.execute("SELECT image_path FROM receipts WHERE id = ?", (rid,)).fetchone()
         if r and r[0]:
             Path(r[0]).unlink(missing_ok=True)
+        (data_dir / "tmp" / f"receipt-{rid}-full.jpg").unlink(missing_ok=True)
         with c:
             c.execute("DELETE FROM receipts WHERE id = ?", (rid,))
         return jsonify(ok=True)
@@ -864,7 +877,10 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
         return {"items": _annotate_lines(c, res["items"])}
 
     def receipt(c, payload, **_):
-        res = ai.parse_receipt(c, Path(payload["path"]).read_bytes())
+        path = Path(payload["path"])
+        res = ai.parse_receipt(c, path.read_bytes())
+        if path.parent.name == "tmp":
+            path.unlink(missing_ok=True)       # read: only the small copy is kept
         lines = _annotate_lines(c, res["items"])
         with c:
             c.execute("UPDATE receipts SET status = 'review', store = ?, purchased_on = ? WHERE id = ?",

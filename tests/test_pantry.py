@@ -1,6 +1,7 @@
 """Run with:  python -m unittest discover tests"""
 from __future__ import annotations
 
+import io
 import json
 import os
 import shutil
@@ -746,6 +747,24 @@ class AITests(Base):
         self.assertTrue(FakeOllama.requests[-1]["messages"][-1]["images"])
         self.assertEqual(FakeOllama.requests[-1]["model"], "qwen2.5vl:3b")
 
+    def test_receipt_keeps_small_copy_only(self):
+        FakeOllama.answers = {"grocery store receipt": json.dumps({"store": "H-E-B", "items": [
+            {"raw": "MILK", "name": "Milk", "quantity": 1, "category": "milk", "is_food": True}]})}
+        big, small = b"\xff\xd8" + b"F" * 50000, b"\xff\xd8" + b"s" * 900
+        r = self.c.post("/api/receipts", data={"image": (io.BytesIO(big), "r.jpg", "image/jpeg"),
+                                                "archive": (io.BytesIO(small), "s.jpg", "image/jpeg")},
+                        headers=H, content_type="multipart/form-data")
+        rid = r.json["receipt_id"]
+        full = os.path.join(self.dir, "tmp", f"receipt-{rid}-full.jpg")
+        self.assertTrue(os.path.exists(full))                           # kept until the AI reads it
+        self.run_jobs()
+        self.assertFalse(os.path.exists(full))                          # then deleted
+        img = self.c.get(f"/api/receipts/{rid}/image")
+        self.assertEqual(img.data, small)                               # the small copy is what's kept
+        self.assertTrue(self.c.get("/api/receipts").json["receipts"][0]["has_image"])
+        self.assertEqual(FakeOllama.requests[-1]["messages"][-1]["images"][0],
+                         __import__("base64").b64encode(big).decode())   # the AI got the full photo
+
     def test_receipt_failure_marks_error(self):
         self.c.put("/api/settings", json={"ai": {"ai_base_url": "http://127.0.0.1:1"}}, headers=H)
         r = self.c.post("/api/receipts", data={"image": (open(__file__, "rb"), "r.jpg", "image/jpeg")},
@@ -754,6 +773,8 @@ class AITests(Base):
         rec = self.c.get(f"/api/receipts/{r.json['receipt_id']}").json["receipt"]
         self.assertEqual(rec["status"], "error")
         self.assertIn("isn't answering", rec["job"]["error"])
+        # The full photo stays for a retry
+        self.assertTrue(os.path.exists(os.path.join(self.dir, "tmp", f"receipt-{r.json['receipt_id']}-full.jpg")))
 
     def test_unreachable_ai_fails_fast(self):
         # 192.0.2.1 is a reserved test address that never answers: the probe gives up in ~5s.
