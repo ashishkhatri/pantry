@@ -400,7 +400,8 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
         <div class="field"><label>Keep it fresh</label><label class="check small"><input type="checkbox" id="rc-auto"> Look for new recipes when the pantry changes (at most every couple of hours)</label></div>
         <div class="field"><label>AI recipes per refresh</label><div class="row" style="gap:6px"><input type="number" id="rc-ai" min="0" max="10" style="width:80px"><span class="muted tiny">0 = only when you ask</span></div></div>
         <div class="field"><label>Web search</label><div><div class="row" style="gap:6px;flex-wrap:nowrap"><input type="password" id="rc-key" autocomplete="off" style="flex:1"><button class="btn small" id="rc-key-clear" style="display:none">Remove</button></div>
-          <div class="tiny muted" style="margin-top:4px">Optional. A free <a href="https://spoonacular.com/food-api/console#Dashboard" target="_blank" rel="noopener">Spoonacular API key</a> finds recipes from sites across the web that use what you have, with links to the originals. The free plan's daily limit is plenty for a household.</div></div></div>
+          <div class="tiny muted" style="margin-top:4px">Optional. A free <a href="https://spoonacular.com/food-api/console#Dashboard" target="_blank" rel="noopener">Spoonacular API key</a> finds recipes from sites across the web that use what you have, with links to the originals. The free plan gives 50 points a day; each web search uses about 8, so Pantry searches at most every 4 hours and stops before the limit.</div>
+          <div class="tiny" id="rc-usage" style="margin-top:4px"></div></div></div>
       </div>
 
       <div class="card">
@@ -1204,6 +1205,7 @@ async function renderSettings(){
   $('#rc-auto').checked=s.recipes_auto==='1'; $('#rc-ai').value=s.recipes_ai_count;
   $('#rc-key').value=''; $('#rc-key').placeholder=s.spoonacular_key_set==='1'?'saved (type to replace)':'paste your key';
   $('#rc-key-clear').style.display=s.spoonacular_key_set==='1'?'':'none';
+  const u=s.spoon_usage; $('#rc-usage').textContent=s.spoonacular_key_set==='1'&&u?`Used today: ${u.used} of ${u.limit} points (resets 7 PM Central / midnight UTC).`:'';
   const {users}=await api('/api/users');
   $('#users-list').innerHTML=users.map(u=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><b>${esc(u.name)}</b>${u.is_admin?'<span class="pill">admin</span>':''}${u.id===ME.user.id?'<span class="pill ok">you</span>':''}<span class="spacer"></span>${ME.user.is_admin&&u.id!==ME.user.id?`<button class="btn small" data-reset="${u.id}">Reset password</button><button class="btn small danger" data-deluser="${u.id}">Remove</button>`:''}</div>`).join('');
   $('#users-add-row').style.display=ME.user.is_admin?'':'none';

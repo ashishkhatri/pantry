@@ -419,6 +419,40 @@ Great with cornbread.
         self.assertEqual((d[0]["title"], d[0]["site"], d[0]["summary"]), ("Spinach Frittata", "someblog.com", "A quick frittata."))
         self.assertEqual([m["name"] for m in d[0]["missing"]], ["feta"])
 
+    def test_spoonacular_daily_budget(self):
+        con = self.con()
+        self.assertIsNone(recipes.web_search_due(con))
+        recipes._spoon_record(con, 45)                       # 5 points left: not enough for a search (~8)
+        self.assertIn("nearly used up", recipes.web_search_due(con))
+        recipes._spoon_record(con, 10)
+        dbm.set_setting(con, "last_web_search", datetime.now().isoformat())
+        con.commit()
+        self.assertIn("4 hours", recipes.web_search_due(con))
+        self.assertIsNone(recipes.web_search_due(con, force=True))   # "Find new recipes" still works
+        self.assertEqual(recipes.spoon_usage(con)["used"], 10.0)
+        dbm.set_setting(con, "spoon_day", "2000-01-01")               # yesterday's count doesn't carry over
+        con.commit()
+        self.assertEqual(recipes.spoon_usage(con)["used"], 0.0)
+        con.close()
+
+    def test_spoonacular_quota_headers_and_402(self):
+        import io, urllib.error
+        class Resp(io.BytesIO):
+            headers = {"X-API-Quota-Used": "17.5"}
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        con = self.con()
+        with mock.patch.object(recipes.urllib.request, "urlopen", return_value=Resp(b"[]")):
+            self.assertEqual(recipes.spoon_get(con, "https://api.spoonacular.com/x"), [])
+        self.assertEqual(recipes.spoon_usage(con)["used"], 17.5)
+        err = urllib.error.HTTPError("https://api.spoonacular.com/x", 402, "Payment Required", {}, io.BytesIO(b""))
+        with mock.patch.object(recipes.urllib.request, "urlopen", side_effect=err):
+            with self.assertRaises(LookupError) as cm:
+                recipes.spoon_get(con, "https://api.spoonacular.com/x")
+        self.assertIn("used up", str(cm.exception))
+        self.assertEqual(recipes.spoon_usage(con)["left"], 0)
+        con.close()
+
     def test_refresh_job_fills_feed(self):
         self.post("/api/items", {"product": {"name": "Large eggs"}})
         with mock.patch.object(recipes, "_get_json", side_effect=lambda url, timeout=20: {

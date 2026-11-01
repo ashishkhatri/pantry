@@ -555,7 +555,7 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         if row:
             return row[0]
         if force or recipes.mealdb_count(c) == 0 or recipes.needs_refresh(c):
-            return runner.submit(c, "feed_refresh", {}, uid())
+            return runner.submit(c, "feed_refresh", {"force": force}, uid())
         return None
 
     @app.get("/api/recipes")
@@ -653,6 +653,7 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         c = con()
         st = {k: dbm.get_setting(c, k) for k in GENERAL}
         st["spoonacular_key_set"] = "1" if dbm.get_setting(c, "spoonacular_key") else "0"
+        st["spoon_usage"] = recipes.spoon_usage(c)
         return jsonify(settings=st, ai=ai.get_settings(c))
 
     @app.put("/api/settings")
@@ -967,10 +968,14 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
         pantry = inventory.pantry_names(c)
         key = dbm.get_setting(c, "spoonacular_key")
         if key and pantry:
-            try:
-                out["web"] = recipes.fetch_spoonacular(c, key, recipes.focus_ingredients(c))
-            except LookupError as e:
-                warnings.append(f"Web recipes: {e}")
+            skip = recipes.web_search_due(c, force=bool(payload.get("force")))
+            if skip:
+                warnings.append(f"Web recipes skipped: {skip}")
+            else:
+                try:
+                    out["web"] = recipes.fetch_spoonacular(c, key, recipes.focus_ingredients(c))
+                except LookupError as e:
+                    warnings.append(f"Web recipes: {e}")
         n = int(dbm.get_setting(c, "recipes_ai_count") or 0)
         if n and pantry and ai.enabled(c):
             try:

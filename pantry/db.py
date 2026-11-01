@@ -168,6 +168,10 @@ DEFAULT_SETTINGS: Dict[str, str] = {
     "recipes_auto": "1",         # refresh the recipe feed in the background
     "recipes_ai_count": "4",     # AI recipes written per refresh
     "spoonacular_key": "",       # optional: web recipe search (free key at spoonacular.com/food-api)
+    "spoonacular_daily": "50",   # points per day on your Spoonacular plan (free = 50)
+    "spoon_day": "",
+    "spoon_used": "0",
+    "last_web_search": "",
     "last_feed_refresh": "",
     "feed_signature": "",
 }

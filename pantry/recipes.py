@@ -387,11 +387,68 @@ def mealdb_count(con) -> int:
 SPOON = "https://api.spoonacular.com"
 
 
+SPOON_COST = 8          # points one web refresh uses: search (~1.1) + details for 12 recipes (~6.5)
+
+
+def spoon_usage(con) -> dict:
+    """Points used today. Spoonacular's day resets at midnight UTC."""
+    today = datetime.utcnow().date().isoformat()
+    used = float(dbm.get_setting(con, "spoon_used") or 0) if dbm.get_setting(con, "spoon_day") == today else 0.0
+    limit = int(dbm.get_setting(con, "spoonacular_daily") or 50)
+    return {"used": round(used, 1), "limit": limit, "left": max(0.0, round(limit - used, 1))}
+
+
+def _spoon_record(con, used: float) -> None:
+    dbm.set_setting(con, "spoon_day", datetime.utcnow().date().isoformat())
+    dbm.set_setting(con, "spoon_used", f"{used:.2f}")
+    con.commit()
+
+
+def spoon_get(con, url: str):
+    """GET from Spoonacular, keeping track of today's points from its quota headers."""
+    req = urllib.request.Request(url, headers={"User-Agent": "PantryApp", "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read().decode("utf-8"))
+            used = r.headers.get("X-API-Quota-Used")
+            if used:
+                _spoon_record(con, float(used))
+            elif r.headers.get("X-API-Quota-Request"):
+                _spoon_record(con, spoon_usage(con)["used"] + float(r.headers["X-API-Quota-Request"]))
+            return data
+    except urllib.error.HTTPError as e:
+        if e.code == 402:
+            _spoon_record(con, float(spoon_usage(con)["limit"]))
+            raise LookupError("today's free Spoonacular points are used up; web recipes resume after midnight UTC.") from e
+        if e.code == 401:
+            raise LookupError("Spoonacular didn't accept the API key. Check it in Settings → Recipes.") from e
+        raise LookupError(f"Spoonacular answered {e.code}.") from e
+    except (OSError, ValueError) as e:
+        raise LookupError(f"Couldn't reach Spoonacular ({e}).") from e
+
+
+def web_search_due(con, force: bool = False) -> Optional[str]:
+    """None if a web search may run now, else the reason to skip it. Keeps under the free daily
+    points and searches at most every 4 hours unless you asked for new recipes."""
+    if spoon_usage(con)["left"] < SPOON_COST:
+        return "today's Spoonacular points are nearly used up; web recipes resume after midnight UTC."
+    last = dbm.get_setting(con, "last_web_search") or ""
+    if not force and last:
+        try:
+            if datetime.now() - datetime.fromisoformat(last) < timedelta(hours=4):
+                return "searched the web less than 4 hours ago."
+        except ValueError:
+            pass
+    return None
+
+
 def fetch_spoonacular(con, key: str, ingredients: List[str], number: int = 12, fetch=None) -> int:
     """Recipes from around the web that use what you have (ranked to need the fewest extras)."""
-    fetch = fetch or _get_json
+    fetch = fetch or (lambda url: spoon_get(con, url))
     if not ingredients:
         return 0
+    dbm.set_setting(con, "last_web_search", datetime.now().isoformat(timespec="seconds"))
+    con.commit()
     found = fetch(f"{SPOON}/recipes/findByIngredients?" + urllib.parse.urlencode(
         {"ingredients": ",".join(ingredients), "number": number, "ranking": 2, "ignorePantry": "true", "apiKey": key}))
     ids = [str(r["id"]) for r in found or [] if r.get("id")]
