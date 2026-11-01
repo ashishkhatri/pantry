@@ -442,6 +442,18 @@ def web_search_due(con, force: bool = False) -> Optional[str]:
     return None
 
 
+def spoon_minutes(r: dict) -> Optional[int]:
+    """Spoonacular's total time, or None when it's only its stand-in: it reports 45 minutes for
+    recipes whose page gives no time (with no prep or cook time behind it)."""
+    total = r.get("readyInMinutes")
+    if not isinstance(total, (int, float)) or total <= 0:
+        return None
+    known = any(isinstance(r.get(k), (int, float)) and r.get(k) > 0 for k in ("preparationMinutes", "cookingMinutes"))
+    if total == 45 and not known:
+        return None
+    return int(total)
+
+
 def fetch_spoonacular(con, key: str, ingredients: List[str], number: int = 12, fetch=None) -> int:
     """Recipes from around the web that use what you have (ranked to need the fewest extras)."""
     fetch = fetch or (lambda url: spoon_get(con, url))
@@ -462,7 +474,7 @@ def fetch_spoonacular(con, key: str, ingredients: List[str], number: int = 12, f
         summary = re.split(r"(?<=[.!?])\s", summary)[0][:300] if summary else None
         if store(con, {"source": "web", "ext_id": str(r["id"]), "title": r.get("title"), "image": r.get("image"),
                        "url": r.get("sourceUrl") or r.get("spoonacularSourceUrl"), "summary": summary,
-                       "time_minutes": r.get("readyInMinutes"), "servings": r.get("servings"),
+                       "time_minutes": spoon_minutes(r), "servings": r.get("servings"),
                        "category": ", ".join((r.get("dishTypes") or [])[:1]) or None,
                        "area": ", ".join((r.get("cuisines") or [])[:1]) or None,
                        "ingredients": [{"name": i.get("nameClean") or i.get("name"), "amount": i.get("original") or ""}

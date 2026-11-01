@@ -416,6 +416,12 @@ Great with cornbread.
         self.assertEqual((d[0]["title"], d[0]["site"], d[0]["summary"]), ("Spinach Frittata", "someblog.com", "A quick frittata."))
         self.assertEqual([m["name"] for m in d[0]["missing"]], ["feta"])
 
+    def test_spoonacular_placeholder_time(self):
+        self.assertIsNone(recipes.spoon_minutes({"readyInMinutes": 45, "preparationMinutes": -1, "cookingMinutes": None}))
+        self.assertEqual(recipes.spoon_minutes({"readyInMinutes": 45, "preparationMinutes": 15, "cookingMinutes": 30}), 45)
+        self.assertEqual(recipes.spoon_minutes({"readyInMinutes": 25}), 25)
+        self.assertIsNone(recipes.spoon_minutes({}))
+
     def test_spoonacular_daily_budget(self):
         con = self.con()
         self.assertIsNone(recipes.web_search_due(con))

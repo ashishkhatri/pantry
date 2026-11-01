@@ -110,6 +110,10 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
             with _c:
                 inventory.adopt_in_use_model(_c)
                 dbm.set_setting(_c, "in_use_model", "1")
+        if dbm.get_setting(_c, "web_45_cleared") != "1":
+            with _c:      # earlier web recipes stored Spoonacular's stand-in 45 minutes as a real time
+                _c.execute("UPDATE recipes SET time_minutes = NULL WHERE source = 'web' AND time_minutes = 45")
+                dbm.set_setting(_c, "web_45_cleared", "1")
     finally:
         _c.close()
     vapid = Vapid.load_or_create(str(data_dir / "vapid_private.pem"),
