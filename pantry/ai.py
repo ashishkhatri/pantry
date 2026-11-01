@@ -393,19 +393,16 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
     p = provider(con)
     desc = " ".join(x for x in (brand, name, f"({size_text})" if size_text else None) if x)
     prompt = (
-        f"Product: {desc}\nCurrent category guess: {category or 'unknown'}\n"
-        "Estimate how long this product, bought fresh/unopened, stays good for eating in each place, "
-        "using food-safety guidance such as USDA FoodKeeper. Be conservative.\n"
+        f"Product: {desc}\nCurrent category guess (may be wrong; correct it): {category or 'unknown'}\n"
+        "Assume the product has been opened and is in use. Estimate how long it stays good for eating in each "
+        "place once opened, using food-safety guidance such as USDA FoodKeeper. Be conservative.\n"
         "Return JSON: {\"category\": one of [" + CATEGORY_LIST + "], "
-        "\"pantry_days\": integer or null if it must not be kept at room temperature, "
-        "\"fridge_days\": integer or null if not suitable, \"freezer_days\": integer or null if it shouldn't be frozen, "
-        "\"opened_days\": days it keeps once opened (in its usual place) or null if not applicable, "
-        "\"best_location\": where a household should normally keep it unopened, \"pantry\" (room temperature, "
-        "including produce like potatoes, onions, bananas and bread) | \"fridge\" | \"freezer\" (only for frozen foods). "
-        "If the product is sold both refrigerated and shelf-stable (plant milks, juice, tofu, some sauces) and the name "
-        "doesn't say shelf-stable, assume the refrigerated version, the safer choice, "
-        "\"opened_location\": where it must be kept once opened, e.g. ketchup, sauces, jam, canned goods and "
-        "shelf-stable milk go to \"fridge\" once opened, while rice, cereal and peanut butter stay in \"pantry\", "
+        "\"pantry_days\": days it keeps opened at room temperature, or null if it must not be kept there, "
+        "\"fridge_days\": days it keeps opened in the fridge, or null if not suitable, "
+        "\"freezer_days\": days it keeps in the freezer, or null if it shouldn't be frozen, "
+        "\"best_location\": where a household keeps it while in use: \"pantry\" (room temperature, e.g. rice, cereal, "
+        "peanut butter, bread, potatoes, onions, bananas, chips, crackers, nuts and other dry snacks like corn nuts) | \"fridge\" (e.g. opened sauces, ketchup, jam, salsa, "
+        "plant milk, juice, broth, leftovers from cans) | \"freezer\" (only for frozen foods), "
         "\"ingredient_name\": the plain ingredient a recipe would list this as, lowercase, no brand or size, "
         "e.g. \"Kirkland Butter Tortillas 20ct\" -> \"flour tortillas\", \"Silk Unsweetened Almondmilk\" -> "
         "\"almond milk\", \"Kerrygold Pure Irish Butter\" -> \"butter\", \"Hunt's Diced Tomatoes\" -> \"diced tomatoes\", "
@@ -418,9 +415,9 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
             "shelf_pantry_days": _int_or_none(d.get("pantry_days")),
             "shelf_fridge_days": _int_or_none(d.get("fridge_days")),
             "shelf_freezer_days": _int_or_none(d.get("freezer_days")),
-            "opened_days": _int_or_none(d.get("opened_days")),
+            "opened_days": None,          # the days above already assume it's opened
             "default_location": loc,
-            "opened_location": d.get("opened_location") if d.get("opened_location") in dbm.LOCATIONS else None,
+            "opened_location": loc,
             "ingredient_name": (str(d.get("ingredient_name") or "").strip().lower()[:80] or None),
             "note": str(d.get("note") or "")[:200]}
 

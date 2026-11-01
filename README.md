@@ -164,24 +164,21 @@ Every AI request is logged to `/var/lib/pantry/ai.log` with timing and the start
 
 Each product has a **category**, such as "Raw poultry" or "Canned goods". The category has default days for pantry, fridge and freezer, plus how long it keeps once opened. The defaults are conservative and loosely based on USDA FoodKeeper guidance. They're plain data in `pantry/shelf.py`, which you can edit.
 
+**Everything counts as opened.** There's no opened/unopened switch to keep up to date. Every product lives where it's kept *in use*: sauces, condiments, jams, broth, juice, plant milk and leftovers from cans go in the fridge, while rice, cereal, snacks and bread stay in the pantry. Its dates assume it's open. The trade-off is that a spare unopened can or jar also gets the shorter opened date; set a product's own days if that bothers you.
+
 An item's estimated date works like this:
-- **Normally:** the day it was added plus the product's days for where it's stored.
-- **Opened:** the date becomes the opened date plus the "once opened" days, if that's sooner.
+- **Normally:** the day it was added plus the product's days for where it's stored, but never longer than the category's "once opened" days, except in the freezer.
 - **Moved to or from the freezer:** the clock restarts from today, because the printed date no longer applies.
 - **Typed by you:** your date is kept as it is.
 
 With AI on, each **new** product is sent to the AI once.
-- **What it decides:** how long the product keeps in each place, and **where to store it** (pantry, fridge or freezer).
+- **What it decides:** how long the product keeps opened in each place, and **where it's kept in use** (pantry, fridge or freezer).
 - **Example:** gochujang gets a year in the pantry instead of the generic "condiments" default.
 - **In the app:** these show as *AI estimate*.
 
 **Products added before AI was set up:** use **Settings → AI → ✦ Estimate shelf life & storage for existing products**.
 - It works through every product still on category defaults, in the background, with progress in the top bar.
 - Tick *Also re-check…* to redo ones the AI already estimated.
-
-**Opened items:** every product has two places, where it's kept unopened and where it goes once opened. Sauces, condiments, jams, canned goods, broth, juice and shelf-stable milk go pantry → fridge; rice and cereal stay in the pantry. The AI sets both, and you can change either in **Product & shelf-life settings**.
-- **Marking an item *Opened*** moves it to the opened place and shortens its date. The date counts from when you bought it and from opening, whichever runs out first.
-- **When adding something already open** (a half-used sauce from the fridge), tick **Already opened**.
 
 **Moving items:** when the AI picks a different storage place, items in stock move there only if they're still where Pantry guessed. Anything you put somewhere yourself, or moved, stays put. Moved items are re-dated for their new place, counted from when they were added.
 

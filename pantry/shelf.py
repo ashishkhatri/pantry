@@ -75,6 +75,9 @@ def opened_location_for_category(cat: str) -> str:
 # Keyword rules, checked in order; first match wins. Word-boundary matched on a
 # lower-cased name, so put specific phrases before generic words.
 KEYWORDS: List[Tuple[str, str]] = [
+    # Snacks whose names contain other foods' words: corn nuts aren't nuts or canned corn.
+    (r"corn ?nuts|trail mix|nut bar|veggie straws|rice cakes?|pita chips|tortilla chips|pork rinds|"
+     r"cheese (puffs|crackers|curls)|fruit snacks|goldfish|popcorn", "snacks"),
     (r"ice cream|gelato|popsicle|frozen yogurt", "ice_cream"),
     (r"\bfrozen\b|\bfz\b|pizza rolls|tater tots|hash browns", "frozen"),
     (r"peanut butter|almond butter|nutella|hazelnut spread|\bjam\b|jelly|preserves", "nut_butter"),
@@ -167,9 +170,12 @@ def guess_category(name: str, off_tags: Iterable[str] = ()) -> str:
 
 def category_info(cat: str) -> dict:
     label, pantry, fridge, freezer, opened, loc = CATEGORIES.get(cat, CATEGORIES["other"])
+    # Everything is treated as opened / in use: it lives where opened ones go (sauces in the fridge),
+    # and keeps no longer than it does once opened (see shelf_days).
+    in_use = opened_location_for_category(cat)
     return {"key": cat if cat in CATEGORIES else "other", "label": label, "pantry_days": pantry,
-            "fridge_days": fridge, "freezer_days": freezer, "opened_days": opened, "default_location": loc,
-            "opened_location": opened_location_for_category(cat)}
+            "fridge_days": fridge, "freezer_days": freezer, "opened_days": opened, "default_location": in_use,
+            "opened_location": in_use}
 
 
 def all_categories() -> List[dict]:
@@ -179,23 +185,37 @@ def all_categories() -> List[dict]:
 def shelf_days(product, location: str) -> Optional[int]:
     """Days a product keeps in a location: its own override, else the category default.
     ``product`` is a mapping with category and shelf_*_days keys."""
+    def own(loc):
+        v = product[f"shelf_{loc}_days"] if f"shelf_{loc}_days" in product.keys() else None
+        return int(v) if v is not None else None
+
     def raw(loc):
-        own = product[f"shelf_{loc}_days"] if f"shelf_{loc}_days" in product.keys() else None
-        return int(own) if own is not None else category_info(product["category"])[f"{loc}_days"]
+        o = own(loc)
+        return o if o is not None else category_info(product["category"])[f"{loc}_days"]
 
     days = raw(location)
-    if days is not None:
+    if days is None:
+        # Not where this food is usually kept. Pick something sensible rather than no date.
+        if location == "pantry":       # a perishable left out
+            days = 1
+        elif location == "fridge":     # shelf-stable in the fridge keeps at least as long; thawed frozen food ~3 days
+            days = raw("pantry") if raw("pantry") is not None else 3
+        else:
+            return raw("fridge") or raw("pantry")   # freezing never shortens it
+    if location == "freezer":
         return days
-    # Not where this food is usually kept. Pick something sensible rather than no date.
-    if location == "pantry":       # a perishable left out
-        return 1
-    if location == "fridge":       # shelf-stable in the fridge keeps at least as long; thawed frozen food ~3 days
-        return raw("pantry") if raw("pantry") is not None else 3
-    return raw("fridge") or raw("pantry")   # freezing never shortens it
+    # Treated as opened. Numbers you or the AI set already mean "in use"; category defaults are for
+    # unopened food, so they're capped by how long it keeps once opened.
+    if own(location) is not None and (product["opened_days"] if "opened_days" in product.keys() else None) is None:
+        return days
+    od = opened_days(product)
+    return min(days, od) if od is not None else days
 
 
 def opened_location(product) -> str:
-    """Where an item of this product goes once opened: its own setting, else the category's."""
+    """Where it's kept in use. Since v0.5 there's one place per product: its usual location."""
+    if "default_location" in product.keys() and product["default_location"]:
+        return product["default_location"]
     own = product["opened_location"] if "opened_location" in product.keys() else None
     if own:
         return own

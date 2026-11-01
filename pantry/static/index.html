@@ -110,7 +110,7 @@ select{appearance:none;-webkit-appearance:none;background-image:var(--chev);back
 .stepper span{min-width:26px;text-align:center;font-weight:650;font-variant-numeric:tabular-nums}
 
 /* pantry table */
-.ptable .ph,.ptable .pr{display:grid;grid-template-columns:minmax(0,1fr) 64px 118px 150px 116px;gap:12px;align-items:center;padding:9px 14px}
+.ptable .ph,.ptable .pr{display:grid;grid-template-columns:minmax(0,1fr) 118px 150px 116px;gap:12px;align-items:center;padding:9px 14px}
 .ptable .ph{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--line);padding-top:10px;padding-bottom:10px}
 .ptable .pr{border-bottom:1px solid var(--line);cursor:pointer}
 .ptable .pr:last-child{border-bottom:0}
@@ -119,9 +119,6 @@ select{appearance:none;-webkit-appearance:none;background-image:var(--chev);back
 .ptable .pname .main{min-width:0}
 .ptable .pname .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ptable .pname .meta{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.ptable .c-open{text-align:center}
-.ptable .c-open input{width:20px;height:20px;accent-color:var(--accent);cursor:pointer}
-.ptable .c-open .lbl{display:none}
 .ptable .c-loc select{padding:5px 26px 5px 8px;font-size:13px;background-position:right 8px center}
 .ptable .c-exp{font-size:13px;line-height:1.3}
 .ptable .c-exp .d{font-variant-numeric:tabular-nums}
@@ -129,13 +126,11 @@ select{appearance:none;-webkit-appearance:none;background-image:var(--chev);back
 .ptable .ph .c-qty{justify-self:end}
 @media (max-width:760px){
   .ptable .ph{display:none}
-  .ptable .pr{grid-template-columns:auto 98px minmax(0,1fr);grid-template-areas:"name name exp" "open loc qty";row-gap:8px;column-gap:10px;padding:10px 12px}
+  .ptable .pr{grid-template-columns:110px minmax(0,1fr);grid-template-areas:"name exp" "loc qty";row-gap:8px;column-gap:10px;padding:10px 12px}
   .ptable .c-loc select{width:100%}
   .ptable .c-exp .d{white-space:nowrap}
-  .ptable .c-qty .stepper button{width:30px}
-  .ptable .pname{grid-area:name}.ptable .c-open{grid-area:open}.ptable .c-loc{grid-area:loc}.ptable .c-exp{grid-area:exp}.ptable .c-qty{grid-area:qty}
-  .ptable .c-open{display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted)}
-  .ptable .c-open .lbl{display:inline}
+  .ptable .c-qty{justify-self:end}
+  .ptable .pname{grid-area:name;min-width:0}.ptable .c-loc{grid-area:loc}.ptable .c-exp{grid-area:exp}.ptable .c-qty{grid-area:qty}
   .ptable .c-exp{display:flex;flex-direction:column;align-items:flex-end;justify-self:end;text-align:right;gap:2px}
 }
 
@@ -650,7 +645,6 @@ function pantryRow(it){
   const meta=[it.brand,it.size_text].filter(Boolean).map(esc).join(' · ')||esc(it.category_label);
   return `<div class="pr" data-item="${it.id}">
     <div class="pname">${thumb(it)}<div class="main"><div class="name">${esc(it.name)}</div><div class="meta">${meta}</div></div></div>
-    <label class="c-open" title="${it.opened_on?'Opened '+esc(fmtDate(it.opened_on)):'Mark as opened'}"><input type="checkbox" data-open="${it.id}" ${it.opened_on?'checked':''}><span class="lbl">Opened</span></label>
     <div class="c-loc"><select data-loc="${it.id}" aria-label="Location">${locOptions(it.location)}</select></div>
     <div class="c-exp">${it.expires_on?`<span class="d">${esc(fmtDate(it.expires_on))}</span>`:'<span class="muted">No date</span>'} ${it.expires_on?expPill(it):''}</div>
     <div class="c-qty"><div class="stepper"><button data-minus="${it.id}" aria-label="Use one">−</button><span>${qtyFmt(it.quantity)}</span><button data-plus="${it.id}" aria-label="Add one">+</button></div></div>
@@ -664,17 +658,11 @@ async function renderPantry(){
   if(sort==='name') items.sort((a,b)=>a.name.localeCompare(b.name));
   if(sort==='added') items.sort((a,b)=>b.added_on.localeCompare(a.added_on)||b.id-a.id);
   const root=$('#pantry-list');
-  root.innerHTML=items.length?`<div class="list ptable"><div class="ph"><div>Item</div><div class="c-open">Opened</div><div>Location</div><div>Good until</div><div class="c-qty">Quantity</div></div>${items.map(pantryRow).join('')}</div>`:
+  root.innerHTML=items.length?`<div class="list ptable"><div class="ph"><div>Item</div><div>Location</div><div>Good until</div><div class="c-qty">Quantity</div></div>${items.map(pantryRow).join('')}</div>`:
     `<div class="card empty">${q?'Nothing matches.':'Nothing here yet.'}<div style="margin-top:12px"><button class="btn primary" onclick="go('scan')">Scan something</button></div></div>`;
   const byId=Object.fromEntries(items.map(i=>[i.id,i]));
   // Tapping the row (not a control) opens the details.
   root.querySelectorAll('.pr').forEach(el=>el.onclick=e=>{ if(e.target.closest('input,select,button,label')) return; itemModal(+el.dataset.item); });
-  root.querySelectorAll('[data-open]').forEach(cb=>cb.onchange=()=>safe(async()=>{
-    const it=byId[cb.dataset.open];
-    await api('/api/items/'+it.id,{method:'PATCH',json:{opened:cb.checked}});
-    if(cb.checked&&it.opened_location&&it.opened_location!==it.location) toast(`${it.name} opened: moved to the ${LOC_LABEL[it.opened_location].toLowerCase()}.`);
-    renderPantry();
-  }));
   root.querySelectorAll('[data-loc]').forEach(sel=>sel.onchange=()=>safe(async()=>{
     await api('/api/items/'+sel.dataset.loc,{method:'PATCH',json:{location:sel.value}}); renderPantry();
   }));
@@ -697,7 +685,6 @@ async function itemModal(id){
       <div class="field"><label>Quantity</label><div class="stepper"><button data-q="-1">−</button><span id="im-q">${qtyFmt(it.quantity)}</span><button data-q="1">+</button></div></div>
       <div class="field"><label>Stored in</label><select id="im-loc">${locOptions(it.location)}</select></div>
       <div class="field"><label>Good until</label><div class="row" style="flex-wrap:nowrap"><input type="date" id="im-exp" value="${it.expires_on||''}">${it.expires_source==='auto'?'<span class="pill">estimated</span>':'<button class="btn small" id="im-auto">Estimate</button>'}</div></div>
-      <div class="field"><label>Opened</label><label class="check"><input type="checkbox" id="im-open" ${it.opened_on?'checked':''}> ${it.opened_on?'since '+esc(fmtDate(it.opened_on)):(it.opened_location&&it.opened_location!==it.location?`Mark as opened (moves it to the ${LOC_LABEL[it.opened_location].toLowerCase()}, shortens the date)`:'Mark as opened (shortens the date)')}</label></div>
       <div class="field"><label>Note</label><input type="text" id="im-note" value="${esc(it.note||'')}"></div>
       <p class="tiny muted">Added ${esc(fmtDate(it.added_on))}${it.added_by_name?' by '+esc(it.added_by_name):''} · ${esc(it.source)}${it.barcode?' · barcode '+esc(it.barcode):''}</p>
       <button class="btn small" id="im-product">Product &amp; shelf-life settings…</button>
@@ -710,10 +697,9 @@ async function itemModal(id){
   m.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{ q=Math.max(.5,q+ +b.dataset.q); $('#im-q').textContent=qtyFmt(q); });
   const autoBtn=m.querySelector('#im-auto'); if(autoBtn) autoBtn.onclick=()=>{ $('#im-exp').value=''; autoBtn.textContent='Will estimate'; };
   $('#im-save').onclick=()=>safe(async()=>{
-    const f={quantity:q,location:$('#im-loc').value,note:$('#im-note').value,opened:$('#im-open').checked};
+    const f={quantity:q,location:$('#im-loc').value,note:$('#im-note').value};
     const e=$('#im-exp').value; if(e!==(it.expires_on||'')||autoBtn&&!e) f.expires_on=e||null;
     if(f.location===it.location) delete f.location;
-    if(f.opened===!!it.opened_on) delete f.opened;
     await api('/api/items/'+id,{method:'PATCH',json:f}); closeModal(); toast('Saved.'); render();
   });
   if($('#im-use1')) $('#im-use1').onclick=()=>{ closeModal(); useItem(id,'used',1); };
@@ -734,12 +720,10 @@ async function productModal(pid){
       <div class="field"><label>Category</label><select id="pm-cat">${catOptions(p.category)}</select></div>
       <div class="field"><label>Counts as ingredient</label><div><input type="text" id="pm-ing" value="${esc(p.ingredient_name||'')}" placeholder="${esc(p.name.toLowerCase())}"><div class="tiny muted" style="margin-top:3px">What a recipe would call it, e.g. “flour tortillas”. Recipes match against this.</div></div></div>
       <div class="field"><label>Usually kept in</label><select id="pm-loc">${locOptions(p.default_location)}</select></div>
-      <div class="field"><label>Once opened, keep in</label><select id="pm-oloc">${locOptions(p.effective_opened_location)}</select></div>
       <div class="field"><label>Barcode</label><input type="text" id="pm-bc" value="${esc(p.barcode||'')}" inputmode="numeric"></div>
-      <h3 style="margin-top:16px">Keeps for (days) <span class="pill ${p.shelf_source==='ai'?'ai':''}">${p.shelf_source==='ai'?'AI estimate':p.shelf_source==='manual'?'set by you':'category default'}</span></h3>
+      <h3 style="margin-top:16px">Keeps for (days, once opened) <span class="pill ${p.shelf_source==='ai'?'ai':''}">${p.shelf_source==='ai'?'AI estimate':p.shelf_source==='manual'?'set by you':'category default'}</span></h3>
       <p class="tiny muted" style="margin-top:-4px">Leave blank to use the category default (shown faded). Changing these updates estimated dates on items in stock.</p>
       ${['pantry','fridge','freezer'].map(l=>`<div class="field"><label>${LOC_LABEL[l]}</label><input type="number" min="0" id="pm-${l}" value="${d('shelf_'+l+'_days')}" placeholder="${p.effective_days[l]??'—'}"></div>`).join('')}
-      <div class="field"><label>Once opened</label><input type="number" min="0" id="pm-opened" value="${d('opened_days')}" placeholder="${p.effective_opened_days??'—'}"></div>
     </div>
     <div class="modal-foot"><button class="btn primary" id="pm-save">Save</button>${ME.ai_enabled?'<button class="btn ai-btn" id="pm-ai">✦ Ask AI</button>':''}<span class="spacer"></span><button class="btn" data-close>Cancel</button></div>`);
   if(p.image_url){ const t=m.querySelector('.modal-head .thumb'); t.classList.add('zoomable'); t.dataset.photo=p.image_url; }
@@ -748,9 +732,8 @@ async function productModal(pid){
     const num=id=>{const v=$(id).value.trim(); return v===''?null:+v;};
     const f={name:$('#pm-name').value,brand:$('#pm-brand').value||null,size_text:$('#pm-size').value||null,category:$('#pm-cat').value,
       default_location:$('#pm-loc').value,barcode:$('#pm-bc').value||null,ingredient_name:$('#pm-ing').value.trim().toLowerCase()||null};
-    if($('#pm-oloc').value!==p.effective_opened_location) f.opened_location=$('#pm-oloc').value;
-    const shelf={shelf_pantry_days:num('#pm-pantry'),shelf_fridge_days:num('#pm-fridge'),shelf_freezer_days:num('#pm-freezer'),opened_days:num('#pm-opened')};
-    if(['pantry','fridge','freezer'].some(l=>shelf['shelf_'+l+'_days']!==p['shelf_'+l+'_days'])||shelf.opened_days!==p.opened_days) Object.assign(f,shelf);
+    const shelf={shelf_pantry_days:num('#pm-pantry'),shelf_fridge_days:num('#pm-fridge'),shelf_freezer_days:num('#pm-freezer')};
+    if(['pantry','fridge','freezer'].some(l=>shelf['shelf_'+l+'_days']!==p['shelf_'+l+'_days'])) Object.assign(f,shelf);
     await api('/api/products/'+pid,{method:'PATCH',json:f}); closeModal(); toast('Saved.'); render();
   });
   const aib=m.querySelector('#pm-ai'); if(aib) aib.onclick=()=>safe(async()=>{
@@ -775,23 +758,24 @@ function confirmModal(sug,{title='Add to pantry',source='manual'}={}){
         <div class="field"><label>Category</label><select id="cf-cat">${catOptions(cat)}</select></div>`}
         <div class="field"><label>How many</label><div class="stepper"><button data-q="-1">−</button><span id="cf-q">1</span><button data-q="1">+</button></div></div>
         <div class="field"><label>Store in</label><select id="cf-loc">${locOptions(loc)}</select></div>
-        <div class="field"><label>Opened</label><label class="check small"><input type="checkbox" id="cf-open"> Already opened <span class="muted" id="cf-open-hint"></span></label></div>
         <div class="field"><label>Good until</label><div><input type="date" id="cf-exp"><div class="tiny muted" id="cf-exp-hint">Leave blank to estimate.</div></div></div>
       </div>
       <div class="modal-foot"><button class="btn primary" id="cf-ok">Add</button><span class="spacer"></span><button class="btn" data-close>Cancel</button></div>`);
     let q=1; m.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{ q=Math.max(1,q+ +b.dataset.q); $('#cf-q').textContent=q; });
     const catSel=m.querySelector('#cf-cat');
-    // Where it goes unopened / opened: the product's own settings, else its category's.
-    const places=()=>{ if(sug.product_id) return [sug.default_location||loc, sug.effective_opened_location||sug.default_location||loc];
-      const c=CATS.find(c=>c.key===(catSel?catSel.value:cat))||{}; return [c.default_location||loc, c.opened_location||c.default_location||loc]; };
-    const syncLoc=()=>{ const [u,o]=places(), opened=$('#cf-open').checked; $('#cf-loc').value=opened?o:u;
-      $('#cf-open-hint').textContent=o!==u?`(goes in the ${LOC_LABEL[o].toLowerCase()}, shorter date)`:'(shorter date)'; };
-    if(catSel) catSel.onchange=syncLoc;
-    $('#cf-open').onchange=syncLoc; syncLoc();
+    let catTouched=false, locTouched=false;
+    if(catSel) catSel.onchange=()=>{ catTouched=true; const c=CATS.find(c=>c.key===catSel.value); if(c&&!locTouched) $('#cf-loc').value=c.default_location; };
+    $('#cf-loc').addEventListener('change',()=>{ locTouched=true; });
+    // A new name with no category yet: let the server guess it (and so where it goes) as you type.
+    const nameIn=m.querySelector('#cf-name');
+    if(nameIn&&!sug.category){ let gt; const guess=()=>{ clearTimeout(gt); gt=setTimeout(async()=>{ if(catTouched||!nameIn.value.trim()) return;
+      try{ const g=await api('/api/categories/guess?name='+encodeURIComponent(nameIn.value.trim()));
+        if(!catTouched){ catSel.value=g.key; if(!locTouched) $('#cf-loc').value=g.default_location; } }catch(e){} },250); };
+      nameIn.addEventListener('input',guess); guess(); }
     const done=v=>{ resolve(v); };
     m.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{ closeModal(); done(null); });
     $('#cf-ok').onclick=()=>safe(async()=>{
-      const body={quantity:q,location:$('#cf-loc').value,expires_on:$('#cf-exp').value||null,source,opened:$('#cf-open').checked};
+      const body={quantity:q,location:$('#cf-loc').value,expires_on:$('#cf-exp').value||null,source};
       if(sug.product_id) body.product_id=sug.product_id;
       else{
         const name=$('#cf-name').value.trim(); if(!name){ $('#cf-name').focus(); return; }

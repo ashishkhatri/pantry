@@ -141,17 +141,31 @@ def recalc_product_items(con, product_id: int) -> int:
     return n
 
 
+def adopt_in_use_model(con) -> dict:
+    """One-time switch (v0.5): there's no "opened" any more; everything lives where it's kept in use and
+    keeps as long as it does opened. Products move to their in-use place unless you set the place
+    yourself; items still where Pantry put them follow; estimated dates are recalculated."""
+    moved = changed = 0
+    for p in con.execute("SELECT * FROM products").fetchall():
+        target = p["default_location"]
+        if p["shelf_source"] != "manual":
+            target = p["opened_location"] or shelf.opened_location_for_category(p["category"])
+        if target != p["default_location"]:
+            moved += con.execute(
+                "UPDATE items SET location = ?, notified_stage = 0 WHERE product_id = ? AND finished_on IS NULL "
+                "AND location = ? AND NOT EXISTS (SELECT 1 FROM events e WHERE e.item_id = items.id AND e.kind = 'move')",
+                (target, p["id"], p["default_location"])).rowcount
+            con.execute("UPDATE products SET default_location = ? WHERE id = ?", (target, p["id"]))
+        changed += recalc_product_items(con, p["id"])
+    return {"moved": moved, "redated": changed}
+
+
 # ---------------- expiry ----------------
 
 def compute_expiry(product, location: str, added_on: date, opened_on: Optional[date] = None) -> Optional[date]:
+    """Estimated date. Everything counts as opened (see shelf.shelf_days); ``opened_on`` is ignored."""
     days = shelf.shelf_days(product, location)
-    exp = added_on + timedelta(days=days) if days is not None else None
-    if opened_on is not None:
-        od = shelf.opened_days(product)
-        if od is not None:
-            o = opened_on + timedelta(days=od)
-            exp = min(exp, o) if exp else o
-    return exp
+    return added_on + timedelta(days=days) if days is not None else None
 
 
 def expiry_status(expires_on: Optional[str], warn_days: int, ref: Optional[date] = None) -> dict:
@@ -178,8 +192,7 @@ def add_item(con, product_id: int, location: Optional[str] = None, quantity: flo
     p = get_product(con, product_id)
     if not p:
         raise InventoryError("Product not found.")
-    default_loc = shelf.opened_location(p) if opened else p["default_location"]
-    location = _check_location(location or default_loc)
+    location = _check_location(location or p["default_location"])
     quantity = float(quantity or 1)
     if quantity <= 0:
         raise InventoryError("Quantity must be more than zero.")
@@ -187,12 +200,12 @@ def add_item(con, product_id: int, location: Optional[str] = None, quantity: flo
     if expires_on:
         exp, src = date.fromisoformat(expires_on), "manual"
     else:
-        exp, src = compute_expiry(p, location, added, today() if opened else None), "auto"
+        exp, src = compute_expiry(p, location, added), "auto"
     cur = con.execute(
         "INSERT INTO items(product_id, location, quantity, added_on, expires_on, expires_source, source, added_by, note, "
         "opened_on) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (product_id, location, quantity, added.isoformat(), _iso(exp), src, source, user_id, note,
-         today().isoformat() if opened else None))
+         None))
     _event(con, "add", product_id, cur.lastrowid, user_id, quantity, source)
     con.execute("UPDATE products SET updated_at = datetime('now') WHERE id = ?", (product_id,))
     return cur.lastrowid
@@ -256,22 +269,6 @@ def update_item(con, item_id: int, fields: dict, user_id: Optional[int] = None) 
         location = _check_location(fields["location"])
         changed_loc = True
         _event(con, "move", p["id"], item_id, user_id, note=f"{it['location']} -> {location}")
-    if "opened" in fields:
-        if fields["opened"] and not opened_on:
-            opened_on = today()
-            _event(con, "open", p["id"], item_id, user_id)
-        elif not fields["opened"]:
-            opened_on = None
-    newly_opened = "opened" in fields and fields["opened"] and not it["opened_on"]
-    if newly_opened and not changed_loc:
-        # Opening moves it where opened ones live (sauce -> fridge). The date counts from when it was
-        # bought and from opening, whichever runs out first, so this isn't a fresh start.
-        target = shelf.opened_location(p)
-        if target != location:
-            _event(con, "move", p["id"], item_id, user_id, note=f"{location} -> {target} (opened)")
-            location = target
-            if expires_source == "auto":
-                expires_on = _iso(compute_expiry(p, location, date.fromisoformat(it["added_on"]), opened_on))
     if changed_loc:
         # Moving to/from the freezer restarts the clock from today; a printed date no longer applies.
         expires_on, expires_source = _iso(compute_expiry(p, location, today(), opened_on)), "auto"
@@ -281,11 +278,6 @@ def update_item(con, item_id: int, fields: dict, user_id: Optional[int] = None) 
         # Cleared date (back to automatic), or an auto date that opening may shorten.
         expires_on = _iso(compute_expiry(p, location, date.fromisoformat(it["added_on"]), opened_on))
         expires_source = "auto"
-    elif newly_opened:
-        od = shelf.opened_days(p)
-        if od is not None:
-            o = opened_on + timedelta(days=od)
-            expires_on = _iso(min(date.fromisoformat(expires_on), o) if expires_on else o)
     qty = it["quantity"]
     if "quantity" in fields:
         qty = float(fields["quantity"])
@@ -324,7 +316,6 @@ def _item_out(r, warn_days: int) -> dict:
     d = dict(r)
     d.update(expiry_status(r["expires_on"], warn_days))
     d["category_label"] = shelf.category_info(r["category"])["label"]
-    d["opened_location"] = r["product_opened_location"] or shelf.opened_location_for_category(r["category"])
     d.pop("product_opened_location", None)
     return d
 

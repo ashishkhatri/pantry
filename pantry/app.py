@@ -103,6 +103,14 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
     (data_dir / "receipts").mkdir(exist_ok=True)
     (data_dir / "tmp").mkdir(exist_ok=True)
     dbm.init_db(app.config["DB_PATH"])
+    _c = dbm.connect(app.config["DB_PATH"])
+    try:
+        if dbm.get_setting(_c, "in_use_model") != "1":
+            with _c:
+                inventory.adopt_in_use_model(_c)
+                dbm.set_setting(_c, "in_use_model", "1")
+    finally:
+        _c.close()
     vapid = Vapid.load_or_create(str(data_dir / "vapid_private.pem"),
                                  os.environ.get("PANTRY_VAPID_SUBJECT", "mailto:pantry@localhost"))
     app.config["VAPID"] = vapid
@@ -267,6 +275,10 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
     @app.get("/api/categories")
     def categories():
         return jsonify(categories=shelf.all_categories(), locations=list(dbm.LOCATIONS))
+
+    @app.get("/api/categories/guess")
+    def category_guess():
+        return jsonify(shelf.category_info(shelf.guess_category(request.args.get("name", ""))))
 
     @app.get("/api/summary")
     def summary():
@@ -870,8 +882,7 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
             fields["category"] = res["category"]
         moved = 0
         new_loc = res.get("default_location")
-        if res.get("opened_location"):
-            fields["opened_location"] = res["opened_location"]
+        fields["opened_location"] = None      # one location now: where it lives in use
         if res.get("ingredient_name") and not p["ingredient_name"]:
             fields["ingredient_name"] = res["ingredient_name"]
         with c:

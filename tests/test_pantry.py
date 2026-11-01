@@ -124,7 +124,7 @@ class InventoryTests(Base):
         r = self.add("Whole Milk")
         it = r["item"]
         self.assertEqual(it["location"], "fridge")
-        self.assertEqual(it["expires_on"], (date.today() + timedelta(days=7)).isoformat())
+        self.assertEqual(it["expires_on"], (date.today() + timedelta(days=5)).isoformat())   # 7 days, 5 once opened
         self.assertEqual(it["status"], "ok")
         # Same name again reuses the product
         r2 = self.add("whole milk")
@@ -144,11 +144,11 @@ class InventoryTests(Base):
         p = self.add("Black beans", product={"barcode": "012345678905"}, quantity=2)
         pid = p["product_id"]
         self.post("/api/items", {"product_id": pid, "quantity": 1,
-                                 "expires_on": (date.today() + timedelta(days=30)).isoformat()})
+                                 "expires_on": (date.today() + timedelta(days=1)).isoformat()})
         r = self.post("/api/scan/out", {"barcode": "0012345678905"})
         self.assertEqual(r["in_stock"], 2)
         items = self.c.get(f"/api/items?product_id={pid}").json["items"]
-        # The 30-day can was used first; the 2-year ones remain
+        # The one expiring tomorrow was used first
         self.assertEqual([i["quantity"] for i in items], [2])
         self.post("/api/scan/out", {"product_id": pid, "quantity": 2})
         self.assertEqual(self.c.get(f"/api/items?product_id={pid}").json["items"], [])
@@ -156,19 +156,6 @@ class InventoryTests(Base):
         self.assertEqual(fin[0]["name"], "Black beans")
         r = self.c.post("/api/scan/out", json={"product_id": pid}, headers=H)
         self.assertEqual(r.status_code, 400)
-
-    def test_move_to_freezer_and_open(self):
-        r = self.add("Chicken thighs")
-        iid = r["item_id"]
-        self.assertEqual(r["item"]["expires_on"], (date.today() + timedelta(days=2)).isoformat())
-        self.c.patch(f"/api/items/{iid}", json={"location": "freezer"}, headers=H)
-        it = self.c.get("/api/items").json["items"][0]
-        self.assertEqual(it["expires_on"], (date.today() + timedelta(days=270)).isoformat())
-        r = self.add("Salsa")
-        self.c.patch(f"/api/items/{r['item_id']}", json={"opened": True}, headers=H)
-        it = [i for i in self.c.get("/api/items").json["items"] if i["name"] == "Salsa"][0]
-        self.assertEqual(it["expires_on"], (date.today() + timedelta(days=7)).isoformat())
-        self.assertEqual(it["opened_on"], date.today().isoformat())
 
     def test_plant_milk_defaults_to_fridge_and_manual_location_sticks(self):
         r = self.add("Almond Milk Unsweetened")
@@ -181,37 +168,46 @@ class InventoryTests(Base):
         self.c.patch(f"/api/products/{r2['product_id']}", json={"name": "Rice cakes", "default_location": "pantry"}, headers=H)
         self.assertEqual(self.c.get(f"/api/products/{r2['product_id']}").json["product"]["shelf_source"], "category")
 
-    def test_opening_moves_to_opened_location(self):
-        # Sauces live in the pantry unopened and the fridge once opened (category default)
-        r = self.add("Sriracha hot sauce")
-        it = r["item"]
-        self.assertEqual((it["location"], it["opened_location"]), ("pantry", "fridge"))
-        self.c.patch(f"/api/items/{r['item_id']}", json={"opened": True}, headers=H)
-        it = [i for i in self.c.get("/api/items").json["items"] if i["id"] == r["item_id"]][0]
-        self.assertEqual(it["location"], "fridge")
-        self.assertEqual(it["expires_on"], (date.today() + timedelta(days=60)).isoformat())   # condiments: 60 days opened
-        self.assertIn("(opened)", self.c.get("/api/history").json["events"][0]["note"])
-        # Rice stays put when opened
-        r = self.add("Jasmine rice")
-        self.c.patch(f"/api/items/{r['item_id']}", json={"opened": True}, headers=H)
-        it = [i for i in self.c.get("/api/items").json["items"] if i["id"] == r["item_id"]][0]
-        self.assertEqual(it["location"], "pantry")
+    def test_move_to_freezer(self):
+        r = self.add("Chicken thighs")
+        self.assertEqual(r["item"]["expires_on"], (date.today() + timedelta(days=2)).isoformat())
+        self.c.patch(f"/api/items/{r['item_id']}", json={"location": "freezer"}, headers=H)
+        it = self.c.get("/api/items").json["items"][0]
+        self.assertEqual(it["expires_on"], (date.today() + timedelta(days=270)).isoformat())   # freezing isn't capped
 
-    def test_add_already_opened(self):
-        r = self.add("Ketchup", opened=True)
-        self.assertEqual(r["item"]["location"], "fridge")
-        self.assertEqual(r["item"]["opened_on"], date.today().isoformat())
-        # Your own choice of place wins
-        r = self.add("Ketchup", opened=True, location="pantry")
-        self.assertEqual(r["item"]["location"], "pantry")
+    def test_everything_counts_as_opened(self):
+        cases = {"Salsa": ("fridge", 7), "Sriracha hot sauce": ("fridge", 60), "Black beans": ("fridge", 4),
+                 "Jasmine rice": ("pantry", 365), "Whole milk": ("fridge", 5), "Frozen peas": ("freezer", 240),
+                 "Corn Nuts": ("pantry", 14)}
+        for name, (loc, days) in cases.items():
+            it = self.add(name)["item"]
+            self.assertEqual((it["location"], it["expires_on"]),
+                             (loc, (date.today() + timedelta(days=days)).isoformat()), name)
+        r = self.add("Pickles")                       # your own numbers aren't capped ("other": pantry)
+        self.c.patch(f"/api/products/{r['product_id']}", json={"shelf_pantry_days": 90}, headers=H)
+        it = [i for i in self.c.get("/api/items").json["items"] if i["id"] == r["item_id"]][0]
+        self.assertEqual(it["expires_on"], (date.today() + timedelta(days=90)).isoformat())
+        # ...but category defaults for the other places still are ("other": fridge 14, opened 14)
+        self.c.patch(f"/api/items/{r['item_id']}", json={"location": "fridge"}, headers=H)
+        it = [i for i in self.c.get("/api/items").json["items"] if i["id"] == r["item_id"]][0]
+        self.assertEqual(it["expires_on"], (date.today() + timedelta(days=14)).isoformat())
 
-    def test_opened_location_setting_is_yours(self):
-        r = self.add("Maple syrup")                      # category sugar: pantry, stays pantry opened
-        self.c.patch(f"/api/products/{r['product_id']}", json={"opened_location": "fridge"}, headers=H)
-        p = self.c.get(f"/api/products/{r['product_id']}").json["product"]
-        self.assertEqual((p["effective_opened_location"], p["shelf_source"]), ("fridge", "manual"))
-        self.c.patch(f"/api/items/{r['item_id']}", json={"opened": True}, headers=H)
-        self.assertEqual(self.c.get("/api/items").json["items"][0]["location"], "fridge")
+    def test_conversion_to_in_use_model(self):
+        con = self.con()
+        with con:
+            pid = con.execute("INSERT INTO products(name, category, default_location) VALUES ('Ketchup', 'condiments', 'pantry')").lastrowid
+            mine = con.execute("INSERT INTO products(name, category, default_location, shelf_source) "
+                               "VALUES ('Mustard', 'condiments', 'pantry', 'manual')").lastrowid
+            for p_ in (pid, mine):
+                con.execute("INSERT INTO items(product_id, location, added_on, expires_on) VALUES (?, 'pantry', ?, ?)",
+                            (p_, date.today().isoformat(), (date.today() + timedelta(days=365)).isoformat()))
+            r = inventory.adopt_in_use_model(con)
+        locs = dict(con.execute("SELECT p.name, i.location FROM items i JOIN products p ON p.id = i.product_id").fetchall())
+        self.assertEqual(locs, {"Ketchup": "fridge", "Mustard": "pantry"})       # yours stays
+        exp = con.execute("SELECT expires_on FROM items WHERE product_id = ?", (pid,)).fetchone()[0]
+        self.assertEqual(exp, (date.today() + timedelta(days=60)).isoformat())
+        self.assertEqual(r["moved"], 1)
+        con.close()
 
     def test_product_shelf_override_recalculates(self):
         r = self.add("Sourdough")
@@ -715,7 +711,7 @@ class AITests(Base):
         self.assertEqual(locs[chosen["item_id"]]["location"], "freezer")
         self.assertEqual(locs[moved_by_you["item_id"]]["location"], "pantry")
         p = self.c.get(f"/api/products/{guessed['product_id']}").json["product"]
-        self.assertEqual((p["default_location"], p["effective_opened_location"]), ("fridge", "fridge"))
+        self.assertEqual(p["default_location"], "fridge")
 
     def test_estimate_existing_stops_when_server_down(self):
         self.c.put("/api/settings", json={"ai": {"ai_auto_shelf": False}}, headers=H)
