@@ -330,9 +330,12 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
   <!-- RECEIPTS -->
   <section class="view" id="view-receipts">
     <h2>Receipts</h2>
-    <p class="sub">Take a photo of a grocery receipt. The AI reads it, then you check the list before anything is added.</p>
+    <p class="sub">Take a photo of a grocery receipt, or upload photos and screenshots you already have. The AI reads it, then you check the list before anything is added.</p>
     <div id="receipts-noai" class="notice" style="display:none">Receipt reading needs an AI model. Set one up in <a href="#settings">Settings → AI</a>.</div>
-    <button class="btn primary" id="receipt-new" style="margin-bottom:16px">📷 Scan a receipt</button>
+    <div class="row" style="margin-bottom:16px">
+      <button class="btn primary" id="receipt-new">📷 Scan a receipt</button>
+      <button class="btn" id="receipt-upload">⬆ Upload from device</button>
+    </div>
     <div id="receipts-list"></div>
   </section>
 
@@ -448,6 +451,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px}
 <div class="toast" id="toast"><span id="toast-text"></span><span id="toast-actions" class="row" style="flex-wrap:nowrap"></span></div>
 <input type="file" accept="image/*" capture="environment" id="file-photo" hidden>
 <input type="file" accept="image/*" capture="environment" id="file-receipt" hidden>
+<input type="file" accept="image/*" multiple id="file-receipt-upload" hidden>
 
 <script>
 "use strict";
@@ -973,7 +977,7 @@ function reviewLines(lines,{title,source,receiptId=null,store=null,date=null}){
 
 /* ---------- receipts ---------- */
 async function renderReceipts(){
-  $('#receipts-noai').style.display=ME.ai_enabled?'none':''; $('#receipt-new').disabled=!ME.ai_enabled;
+  $('#receipts-noai').style.display=ME.ai_enabled?'none':''; $('#receipt-new').disabled=$('#receipt-upload').disabled=!ME.ai_enabled;
   const {receipts}=await api('/api/receipts');
   const st={processing:'<span class="pill"><span class="spin" style="display:inline-block;width:9px;height:9px;vertical-align:-1px"></span> reading</span>',review:'<span class="pill warn">ready to review</span>',done:'<span class="pill ok">added</span>',error:'<span class="pill neg">failed</span>'};
   $('#receipts-list').innerHTML=receipts.length?`<div class="list">${receipts.map(r=>`<div class="it" data-r="${r.id}">${r.has_image?`<div class="thumb zoomable" data-photo="/api/receipts/${r.id}/image" title="View receipt"><img src="/api/receipts/${r.id}/image" alt="" loading="lazy"></div>`:'<div class="thumb">🧾</div>'}<div class="main"><div class="name">${esc(r.store||'Receipt')} ${r.purchased_on?'<span class="muted" style="font-weight:400">'+esc(fmtDate(r.purchased_on))+'</span>':''}</div>
@@ -988,18 +992,42 @@ async function openReceipt(id){
   if(r.status==='error'){ toast(r.job?.error||'Reading failed.',[['Retry',()=>safe(async()=>{ const {job}=await api(`/api/receipts/${id}/retry`,{json:{}}); render(); const res=await pollJob(job,'Reading the receipt…'); reviewLines(res.items,{title:'Receipt',source:'receipt',receiptId:id,store:res.store,date:res.date}); })],['Delete',()=>safe(async()=>{ await api('/api/receipts/'+id,{method:'DELETE'}); render(); })]],9000); return; }
   if(r.job?.result) reviewLines(r.job.result.items,{title:r.status==='done'?'Receipt (already added)':'Receipt',source:'receipt',receiptId:id,store:r.store,date:r.purchased_on});
 }
+async function sendReceipt(f){
+  const fd=new FormData(); fd.append('image',await shrink(f,2000,.88),'receipt.jpg');
+  const arch=await receiptArchive(f); if(arch) fd.append('archive',arch,'receipt-small.jpg');
+  return api('/api/receipts',{method:'POST',body:fd});
+}
+async function readReceipt(receipt_id,job,review=true){
+  const res=await pollJob(job,'Reading the receipt…');
+  render(); if(review) reviewLines(res.items,{title:'Receipt',source:'receipt',receiptId:receipt_id,store:res.store,date:res.date});
+}
 $('#receipt-new').onclick=async()=>{
   const f=await pickImage('#file-receipt'); if(!f) return;
   await safe(async()=>{
-    const fd=new FormData(); fd.append('image',await shrink(f,2000,.88),'receipt.jpg');
-    const arch=await receiptArchive(f); if(arch) fd.append('archive',arch,'receipt-small.jpg');
-    const {receipt_id,job}=await api('/api/receipts',{method:'POST',body:fd});
-    render();
-    toast('Receipt uploaded. You can leave this page; it keeps reading on the server.');
-    const res=await pollJob(job,'Reading the receipt…');
-    render(); reviewLines(res.items,{title:'Receipt',source:'receipt',receiptId:receipt_id,store:res.store,date:res.date});
+    const {receipt_id,job}=await sendReceipt(f);
+    render(); toast('Receipt uploaded. You can leave this page; it keeps reading on the server.');
+    await readReceipt(receipt_id,job);
   });
 };
+// Saved photos or screenshots (several at once), from the picker or dropped on the page.
+async function uploadReceipts(fileList){
+  const files=[...fileList].filter(f=>f.type.startsWith('image/'));
+  if(!files.length){ toast('Pick a photo or screenshot of the receipt.'); return; }
+  const sent=[];
+  for(const f of files) sent.push(await sendReceipt(f));
+  render();
+  if(sent.length===1){ toast('Receipt uploaded. It keeps reading on the server.'); await readReceipt(sent[0].receipt_id,sent[0].job); return; }
+  toast(`${sent.length} receipts uploaded. They're read one at a time; open each from the list when it says “ready to review”.`,[],7000);
+  for(const r of sent) await readReceipt(r.receipt_id,r.job,false).catch(()=>{});
+  toast(`${sent.length} receipts are ready to review.`); render();
+}
+$('#receipt-upload').onclick=()=>{
+  const el=$('#file-receipt-upload'); el.value='';
+  el.onchange=()=>safe(()=>uploadReceipts(el.files));
+  el.click();
+};
+$('#view-receipts').addEventListener('dragover',e=>{ if(ME&&ME.ai_enabled) e.preventDefault(); });
+$('#view-receipts').addEventListener('drop',e=>{ e.preventDefault(); if(ME&&ME.ai_enabled) safe(()=>uploadReceipts(e.dataTransfer.files)); });
 
 /* ---------- recipes: a blog-style feed from every source ---------- */
 const SRC_LABEL={mealdb:'Library',web:'Web',link:'Your link',ai:'AI idea'};
