@@ -915,3 +915,15 @@ class AITests(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_frozen_products_stay_in_freezer(monkeypatch):
+    from pantry import ai, shelf
+    assert shelf.guess_category("Farm Rich Mozzarella Sticks") == "frozen"
+    assert shelf.guess_category("Fresh Mozzarella") == "cheese_soft"
+    # The model thinks of opened cheese and says fridge, 3 days; Pantry keeps it frozen.
+    monkeypatch.setattr(ai, "provider", lambda con: None)
+    monkeypatch.setattr(ai, "ask_json", lambda *a, **k: {"category": "cheese_soft", "pantry_days": None,
+                        "fridge_days": 3, "freezer_days": None, "best_location": "fridge"})
+    r = ai.shelf_life(None, "Mozzarella Sticks", "Farm Rich")
+    assert r["default_location"] == "freezer" and r["shelf_freezer_days"] == 240

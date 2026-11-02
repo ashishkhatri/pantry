@@ -79,7 +79,10 @@ KEYWORDS: List[Tuple[str, str]] = [
     (r"corn ?nuts|trail mix|nut bar|veggie straws|rice cakes?|pita chips|tortilla chips|pork rinds|"
      r"cheese (puffs|crackers|curls)|fruit snacks|goldfish|popcorn", "snacks"),
     (r"ice cream|gelato|popsicle|frozen yogurt", "ice_cream"),
-    (r"\bfrozen\b|\bfz\b|pizza rolls|tater tots|hash browns", "frozen"),
+    (r"\bfrozen\b|\bfz\b|pizza rolls|tater tots|hash browns|mozzarella sticks|cheese sticks? breaded|"
+     r"breaded (cheese|mozzarella)|nuggets|fish sticks|fish fingers|corn dogs?|egg rolls|spring rolls|pot ?stickers|"
+     r"bagel bites|hot pockets|french fries|crinkle fries|waffle fries|curly fries|onion rings|eggo|toaster waffles|"
+     r"jalapeno poppers|taquitos|frozen (pizza|vegetables|veggies|fruit|meals?)", "frozen"),
     (r"peanut butter|almond butter|nutella|hazelnut spread|\bjam\b|jelly|preserves", "nut_butter"),
     (r"almond milk|oat milk|soy milk|coconut milk beverage|rice milk", "plant_milk"),
     (r"sour cream|cottage cheese|cream cheese", "yogurt"),

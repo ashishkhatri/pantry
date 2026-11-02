@@ -412,6 +412,9 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
         f"Product: {desc}\nCurrent category guess (may be wrong; correct it): {category or 'unknown'}\n"
         "Assume the product has been opened and is in use. Estimate how long it stays good for eating in each "
         "place once opened, using food-safety guidance such as USDA FoodKeeper. Be conservative.\n"
+        "Foods sold frozen (mozzarella sticks, nuggets, fries, frozen pizza, frozen vegetables, waffles, ice cream) "
+        "stay in the freezer after the bag is opened: their best_location is \"freezer\", freezer_days is how long "
+        "an opened bag keeps frozen (usually months), and fridge_days is how long it keeps once thawed.\n"
         "Return JSON: {\"category\": one of [" + CATEGORY_LIST + "], "
         "\"pantry_days\": days it keeps opened at room temperature, or null if it must not be kept there, "
         "\"fridge_days\": days it keeps opened in the fridge, or null if not suitable, "
@@ -427,6 +430,13 @@ def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[s
     if not isinstance(d, dict):
         raise AIError("Unexpected answer for shelf life.")
     loc = d.get("best_location") if d.get("best_location") in dbm.LOCATIONS else None
+    # A frozen product stays frozen when opened; don't let the model move it to the fridge.
+    frozen_cats = ("frozen", "ice_cream")
+    if (shelf.guess_category(f"{brand or ''} {name}") in frozen_cats or category in frozen_cats
+            or _clean_category(d.get("category")) in frozen_cats):
+        loc = "freezer"
+        if not _int_or_none(d.get("freezer_days")):
+            d["freezer_days"] = 240
     return {"category": _clean_category(d.get("category")) if d.get("category") else category,
             "shelf_pantry_days": _int_or_none(d.get("pantry_days")),
             "shelf_fridge_days": _int_or_none(d.get("fridge_days")),
