@@ -85,7 +85,7 @@ class JobRunner:
                     con.execute("UPDATE jobs SET status = 'done', result = ?, finished_at = datetime('now') WHERE id = ?",
                                 (json.dumps(result), jid))
             except Exception as e:
-                if not getattr(e, "expected", False) and e.__class__.__name__ not in ("AIError", "NotConfigured", "LookupError", "InventoryError"):
+                if not getattr(e, "expected", False) and e.__class__.__name__ not in ("AIError", "NotConfigured", "LookupError", "InventoryError", "PdfError"):
                     log.error("job %s (%s) failed:\n%s", jid, row["kind"], traceback.format_exc())
                 with con:
                     con.execute("UPDATE jobs SET status = 'error', error = ?, finished_at = datetime('now') WHERE id = ?",

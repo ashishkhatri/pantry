@@ -19,7 +19,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from . import __version__
-from . import ai, inventory, jobs, lookup, notify, recipes, shelf
+from . import ai, inventory, jobs, lookup, notify, pdf, recipes, shelf
 from . import db as dbm
 from .inventory import InventoryError
 from .webpush import Vapid
@@ -29,6 +29,7 @@ DATA_DIR = Path(os.environ.get("PANTRY_DATA_DIR", ROOT / "data"))
 STATIC = Path(__file__).resolve().parent / "static"
 PUBLIC_API = {"/api/me", "/api/login", "/api/setup"}
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"}
+PDF_TYPES = {"application/pdf", "application/x-pdf"}
 
 
 class ApiError(Exception):
@@ -142,6 +143,7 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
     def _api_err(e):
         return jsonify(error=str(e)), e.status
 
+    @app.errorhandler(pdf.PdfError)
     @app.errorhandler(InventoryError)
     @app.errorhandler(ai.AIError)
     @app.errorhandler(LookupError)
@@ -481,12 +483,12 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
 
     # ---------------- photos & receipts (AI jobs) ----------------
 
-    def _save_upload(folder: Path, name: str, field: str = "image") -> Path:
+    def _save_upload(folder: Path, name: str, field: str = "image", allow_pdf: bool = False) -> Path:
         f = request.files.get(field)
         if not f:
             raise ApiError("No image received.")
-        if f.mimetype not in IMAGE_TYPES:
-            raise ApiError("Upload a JPEG, PNG or WebP photo.")
+        if f.mimetype not in IMAGE_TYPES and not (allow_pdf and f.mimetype in PDF_TYPES):
+            raise ApiError("Upload a PDF or a JPEG, PNG or WebP photo." if allow_pdf else "Upload a JPEG, PNG or WebP photo.")
         path = folder / name
         f.save(path)
         return path
@@ -506,6 +508,19 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
             raise ApiError("Receipt reading needs AI. Set it up in Settings → AI.")
         with c:
             rid = c.execute("INSERT INTO receipts(user_id) VALUES (?)", (uid(),)).lastrowid
+        upload = request.files.get("image")
+        if upload and upload.mimetype in PDF_TYPES:
+            # An e-receipt PDF: it's small, so the PDF itself is what's kept.
+            keep = _save_upload(data_dir / "receipts", f"{rid}.pdf", allow_pdf=True)
+            if not pdf.is_pdf(keep.read_bytes()[:8]):
+                keep.unlink(missing_ok=True)
+                with c:
+                    c.execute("DELETE FROM receipts WHERE id = ?", (rid,))
+                raise ApiError("That file isn't a PDF.")
+            job = runner.submit(c, "receipt", {"path": str(keep), "receipt_id": rid}, uid())
+            with c:
+                c.execute("UPDATE receipts SET image_path = ?, job_id = ? WHERE id = ?", (str(keep), job, rid))
+            return jsonify(receipt_id=rid, job=job)
         # The full-size photo is only for the AI to read; it's deleted once read. What's kept is the small
         # black & white copy the phone made ("archive"), or the full photo if an older page sent none.
         full = _save_upload(data_dir / "tmp", f"receipt-{rid}-full.jpg")
@@ -524,7 +539,8 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         rows = con().execute("SELECT r.*, u.name AS user_name FROM receipts r LEFT JOIN users u ON u.id = r.user_id "
                              "ORDER BY r.id DESC LIMIT 50").fetchall()
         return jsonify(receipts=[{**{k: r[k] for k in r.keys() if k != "image_path"},
-                                  "has_image": bool(r["image_path"] and Path(r["image_path"]).exists())} for r in rows])
+                                  "has_image": bool(r["image_path"] and Path(r["image_path"]).exists()),
+                                  "is_pdf": bool(r["image_path"] and r["image_path"].endswith(".pdf"))} for r in rows])
 
     @app.get("/api/receipts/<int:rid>")
     def receipt_get(rid):
@@ -533,6 +549,7 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         if not r:
             raise ApiError("Receipt not found.", 404)
         d = {k: r[k] for k in r.keys() if k != "image_path"}
+        d["is_pdf"] = bool(r["image_path"] and r["image_path"].endswith(".pdf"))
         d["job"] = jobs.get(c, r["job_id"]) if r["job_id"] else None
         return jsonify(receipt=d)
 
@@ -541,7 +558,7 @@ def create_app(db_path=None, start_background: bool = True) -> Flask:
         r = con().execute("SELECT image_path FROM receipts WHERE id = ?", (rid,)).fetchone()
         if not r or not r[0] or not Path(r[0]).exists():
             raise ApiError("No image.", 404)
-        resp = send_file(r[0], mimetype="image/jpeg", max_age=86400)
+        resp = send_file(r[0], mimetype="application/pdf" if r[0].endswith(".pdf") else "image/jpeg", max_age=86400)
         resp.headers["Cache-Control"] = "private, max-age=86400"
         return resp
 
@@ -882,7 +899,13 @@ def _register_jobs(runner: jobs.JobRunner, data_dir: Path) -> None:
 
     def receipt(c, payload, **_):
         path = Path(payload["path"])
-        res = ai.parse_receipt(c, path.read_bytes())
+        if path.suffix == ".pdf":
+            txt = pdf.text(path)
+            # A real e-receipt has text: read that (exact, and no vision model needed). A scanned
+            # PDF has none, so its pages go to the vision model as pictures.
+            res = ai.parse_receipt_text(c, txt) if len(txt.strip()) >= 25 else ai.parse_receipt(c, pdf.page_images(path))
+        else:
+            res = ai.parse_receipt(c, path.read_bytes())
         if path.parent.name == "tmp":
             path.unlink(missing_ok=True)       # read: only the small copy is kept
         lines = _annotate_lines(c, res["items"])

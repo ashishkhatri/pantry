@@ -367,25 +367,41 @@ def identify_food(con, image: bytes) -> dict:
     return {"items": items}
 
 
-def parse_receipt(con, image: bytes) -> dict:
-    p = provider(con, vision=True)
-    prompt = (
-        "This is a photo of a grocery store receipt. Read every purchased line.\n"
-        "Receipt lines are abbreviated: expand them into plain product names, e.g. \"GV WHL MLK GAL\" -> "
-        "name \"Whole milk\", brand \"Great Value\", size \"1 gal\". A line with a quantity like \"2 @ 1.29\" means quantity 2.\n"
-        "Return JSON: {\"store\": store name or null, \"date\": purchase date as YYYY-MM-DD or null, "
-        "\"items\": [{\"raw\": the line as printed, \"name\": expanded generic name, \"brand\": brand or null, "
-        "\"size\": size or null, \"quantity\": integer, "
-        f"\"category\": one of [{CATEGORY_LIST}], "
-        "\"is_food\": false for non-food such as paper towels, soap, bags, deposits, coupons}]}\n"
-        "Skip subtotal, tax, total, payment and savings lines.")
-    data = ask_json(p, "receipt", SYSTEM, prompt, [image], 4000)
+RECEIPT_RULES = (
+    "Receipt lines are abbreviated: expand them into plain product names, e.g. \"GV WHL MLK GAL\" -> "
+    "name \"Whole milk\", brand \"Great Value\", size \"1 gal\". A line with a quantity like \"2 @ 1.29\" means quantity 2.\n"
+    "Return JSON: {\"store\": store name or null, \"date\": purchase date as YYYY-MM-DD or null, "
+    "\"items\": [{\"raw\": the line as printed, \"name\": expanded generic name, \"brand\": brand or null, "
+    "\"size\": size or null, \"quantity\": integer, "
+    f"\"category\": one of [{CATEGORY_LIST}], "
+    "\"is_food\": false for non-food such as paper towels, soap, bags, deposits, coupons}]}\n"
+    "Skip subtotal, tax, total, payment and savings lines.")
+
+
+def _receipt_out(data) -> dict:
     if not isinstance(data, dict):
         data = {"items": data}
     d = str(data.get("date") or "")
     return {"store": (str(data.get("store")).strip()[:80] or None) if data.get("store") else None,
             "date": d if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) else None,
             "items": _clean_items(data.get("items"))}
+
+
+def parse_receipt(con, image, *more: bytes) -> dict:
+    """A receipt photo, or several page images of one receipt."""
+    images = list(image) if isinstance(image, (list, tuple)) else [image, *more]
+    p = provider(con, vision=True)
+    what = "a photo of a grocery store receipt" if len(images) == 1 else f"{len(images)} pages of one grocery store receipt"
+    prompt = f"This is {what}. Read every purchased line.\n" + RECEIPT_RULES
+    return _receipt_out(ask_json(p, "receipt", SYSTEM, prompt, images, 4000))
+
+
+def parse_receipt_text(con, text: str) -> dict:
+    """An e-receipt's text (from a PDF): no vision needed."""
+    p = provider(con)
+    prompt = ("Below is the text of a grocery store receipt (from an e-receipt PDF). Read every purchased line.\n"
+              + RECEIPT_RULES + "\n\nRECEIPT TEXT:\n" + text[:16000])
+    return _receipt_out(ask_json(p, "receipt", SYSTEM, prompt, None, 4000))
 
 
 def shelf_life(con, name: str, brand: Optional[str] = None, category: Optional[str] = None,

@@ -771,6 +771,64 @@ class AITests(Base):
         self.assertEqual(FakeOllama.requests[-1]["messages"][-1]["images"][0],
                          __import__("base64").b64encode(big).decode())   # the AI got the full photo
 
+    @staticmethod
+    def text_pdf(lines):
+        """A minimal real PDF with a text layer, like a store's e-receipt."""
+        stream = "BT /F1 12 Tf 72 720 Td 14 TL " + " ".join(f"({l}) Tj T*" for l in lines) + " ET"
+        objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+                "/Resources << /Font << /F1 5 0 R >> >> >>",
+                f"<< /Length {len(stream)} >>\nstream\n{stream}\nendstream",
+                "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+        out, offs = "%PDF-1.4\n", []
+        for i, o in enumerate(objs, 1):
+            offs.append(len(out))
+            out += f"{i} 0 obj\n{o}\nendobj\n"
+        xref = len(out)
+        out += f"xref\n0 {len(objs)+1}\n0000000000 65535 f \n" + "".join(f"{o:010d} 00000 n \n" for o in offs)
+        out += f"trailer\n<< /Size {len(objs)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+        return out.encode("latin-1")
+
+    def test_pdf_receipt_with_text(self):
+        FakeOllama.answers = {"RECEIPT TEXT": json.dumps({"store": "Target", "date": "2026-11-01", "items": [
+            {"raw": "GG MILK 1GAL", "name": "Whole milk", "quantity": 1, "category": "milk", "is_food": True}]})}
+        data = self.text_pdf(["TARGET STORE 1234", "11/01/2026", "GG MILK 1GAL   3.49", "TOTAL 3.49"])
+        r = self.c.post("/api/receipts", data={"image": (io.BytesIO(data), "receipt.pdf", "application/pdf")},
+                        headers=H, content_type="multipart/form-data")
+        self.assertEqual(r.status_code, 200, r.json)
+        self.run_jobs()
+        rec = self.c.get(f"/api/receipts/{r.json['receipt_id']}").json["receipt"]
+        self.assertEqual((rec["status"], rec["store"], rec["is_pdf"]), ("review", "Target", True))
+        sent = FakeOllama.requests[-1]
+        self.assertIn("GG MILK 1GAL", sent["messages"][-1]["content"])     # the PDF's text went to the AI
+        self.assertNotIn("images", sent["messages"][-1])                    # no picture needed
+        self.assertEqual(sent["model"], "llama3.2:3b")                       # text model
+        img = self.c.get(f"/api/receipts/{r.json['receipt_id']}/image")
+        self.assertEqual((img.mimetype, img.data[:5]), ("application/pdf", b"%PDF-"))   # the PDF is what's kept
+
+    def test_scanned_pdf_receipt(self):
+        from PIL import Image, ImageDraw
+        im = Image.new("RGB", (600, 1000), "white")
+        ImageDraw.Draw(im).text((50, 50), "SCANNED RECEIPT  MILK 3.49", fill="black")
+        buf = io.BytesIO()
+        im.save(buf, "PDF")                                                  # image-only PDF, no text layer
+        FakeOllama.answers = {"grocery store receipt": json.dumps({"store": "Kroger", "items": [
+            {"raw": "MILK", "name": "Milk", "quantity": 1, "category": "milk", "is_food": True}]})}
+        r = self.c.post("/api/receipts", data={"image": (io.BytesIO(buf.getvalue()), "scan.pdf", "application/pdf")},
+                        headers=H, content_type="multipart/form-data")
+        self.run_jobs()
+        rec = self.c.get(f"/api/receipts/{r.json['receipt_id']}").json["receipt"]
+        self.assertEqual((rec["status"], rec["store"]), ("review", "Kroger"), rec)
+        sent = FakeOllama.requests[-1]
+        self.assertEqual(len(sent["messages"][-1]["images"]), 1)            # the page went as a picture
+        self.assertEqual(sent["model"], "qwen2.5vl:3b")                      # vision model
+
+    def test_not_really_a_pdf(self):
+        r = self.c.post("/api/receipts", data={"image": (io.BytesIO(b"hello"), "x.pdf", "application/pdf")},
+                        headers=H, content_type="multipart/form-data")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.c.get("/api/receipts").json["receipts"], [])
+
     def test_receipt_failure_marks_error(self):
         self.c.put("/api/settings", json={"ai": {"ai_base_url": "http://127.0.0.1:1"}}, headers=H)
         r = self.c.post("/api/receipts", data={"image": (open(__file__, "rb"), "r.jpg", "image/jpeg")},
