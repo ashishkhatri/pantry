@@ -505,15 +505,33 @@ function expPill(it){
 const qtyFmt=q=>Number.isInteger(q)?q:(+q).toFixed(1).replace(/\.0$/,'');
 // Open Food Facts serves small images (…200.jpg); the same photo exists at 400px.
 function bigImage(url){ return String(url||'').replace(/\.(100|200)\.jpg(\?.*)?$/,'.400.jpg'); }
+/* ---------- back button closes popups ----------
+   Each open popup (modal, full-screen photo) owns one browser-history entry, so the phone's Back
+   closes the top one. Closing with ×/Cancel/backdrop removes that entry again (history.back()),
+   and anything that wants to add history meanwhile waits until that's done, so entries never mix. */
+const overlays=[];            // open popups, top last: 'modal' | 'photo'
+let backPending=0, afterBackQueue=[];
+function whenHistoryIdle(fn){ if(backPending) afterBackQueue.push(fn); else fn(); }
+function pushOverlay(kind){
+  overlays.push(kind);
+  whenHistoryIdle(()=>history.pushState({overlay:kind},'',location.href));
+}
+function popOverlay(kind){      // closed from the UI: drop its history entry
+  const i=overlays.lastIndexOf(kind); if(i<0) return;
+  overlays.splice(i,1);
+  backPending++; history.back();
+}
 function openPhoto(url){
   const lb=$('#lightbox'), img=lb.querySelector('img');
   img.onerror=()=>{ img.onerror=null; img.src=url; };     // no 400px version: show the original
   // Tall pictures (receipts): full width, scroll down them, instead of shrinking the text to fit.
   img.onload=()=>{ lb.classList.toggle('tall',img.naturalHeight>img.naturalWidth*1.6); };
   lb.classList.remove('tall'); lb.scrollTop=0;
-  img.referrerPolicy='no-referrer'; img.src=bigImage(url); lb.classList.add('show');
+  img.referrerPolicy='no-referrer'; img.src=bigImage(url);
+  if(!lb.classList.contains('show')){ lb.classList.add('show'); pushOverlay('photo'); }
 }
-function closePhoto(){ $('#lightbox').classList.remove('show'); }
+function hidePhoto(){ $('#lightbox').classList.remove('show'); }
+function closePhoto(){ if(!$('#lightbox').classList.contains('show')) return; hidePhoto(); popOverlay('photo'); }
 $('#lightbox').addEventListener('click',closePhoto);
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&$('#lightbox').classList.contains('show')){ e.stopImmediatePropagation(); closePhoto(); } },true);
 function bindPhotos(root){
@@ -527,11 +545,14 @@ function beep(){ try{ navigator.vibrate&&navigator.vibrate(60); const a=new (win
 
 /* ---------- modal ---------- */
 function openModal(html,{wide=false}={}){
-  const m=$('#modal'); m.className='modal'+(wide?' wide':''); m.innerHTML=html; $('#modal-bg').classList.add('show');
+  const m=$('#modal'), wasOpen=$('#modal-bg').classList.contains('show');
+  m.className='modal'+(wide?' wide':''); m.innerHTML=html; $('#modal-bg').classList.add('show');
+  if(!wasOpen) pushOverlay('modal');      // replacing an open popup's content keeps its one entry
   m.querySelectorAll('[data-close]').forEach(b=>b.onclick=closeModal);
   return m;
 }
-function closeModal(){ $('#modal-bg').classList.remove('show'); $('#modal').innerHTML=''; if(view==='scan'&&scanWanted) resumeScanner(); }
+function hideModal(){ $('#modal-bg').classList.remove('show'); $('#modal').innerHTML=''; if(view==='scan'&&scanWanted) resumeScanner(); }
+function closeModal(){ if(!$('#modal-bg').classList.contains('show')) return; hideModal(); popOverlay('modal'); }
 $('#modal-bg').addEventListener('mousedown',e=>{ if(e.target.id==='modal-bg') closeModal(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&$('#modal-bg').classList.contains('show')) closeModal(); });
 
@@ -596,7 +617,7 @@ function go(v,{push=true}={}){
   if(!VIEWS.includes(v)) v='home';
   if(view==='scan'&&v!=='scan') stopScanner();
   view=v;
-  if(push&&location.hash!=='#'+v) history.pushState(null,'','#'+v);
+  if(push) whenHistoryIdle(()=>{ if(location.hash!=='#'+v) history.pushState(null,'','#'+v); });
   $$('nav button[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v||(v==='receipts'&&b.dataset.view==='settings'&&b.closest('.tabs'))));
   $$('.view').forEach(s=>s.classList.toggle('active',s.id==='view-'+v));
   window.scrollTo(0,0);
@@ -604,7 +625,18 @@ function go(v,{push=true}={}){
 }
 function render(){ safe(()=>({home:renderHome,pantry:renderPantry,scan:renderScan,receipts:renderReceipts,recipes:renderRecipes,settings:renderSettings})[view]()); }
 $$('nav button[data-view]').forEach(b=>b.onclick=()=>go(b.dataset.view));
-window.addEventListener('popstate',()=>{ const h=location.hash.slice(1); go(h==='expiring'?'home':h,{push:false}); });
+window.addEventListener('popstate',()=>{
+  if(backPending){                         // our own history.back() after closing a popup
+    if(--backPending===0){ const q=afterBackQueue; afterBackQueue=[]; q.forEach(fn=>fn()); }
+    return;
+  }
+  if(overlays.length){                     // Back pressed with a popup open: close the top one
+    const top=overlays.pop();
+    if(top==='photo') hidePhoto(); else hideModal();
+    return;
+  }
+  const h=location.hash.slice(1); go(h==='expiring'?'home':h,{push:false});
+});
 $$('[data-go]').forEach(el=>el.onclick=()=>{ if(el.dataset.mode) setScanMode(el.dataset.mode); go(el.dataset.go); });
 $('#hdr-add').onclick=()=>addByNameModal();
 

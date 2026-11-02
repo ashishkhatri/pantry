@@ -1,2 +1,2 @@
 """Pantry: household pantry tracker. Flask + SQLite server with a PWA front end."""
-__version__ = "0.7.0"
+__version__ = "0.7.1"
